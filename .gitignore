@@ -1,0 +1,38 @@
+# Imagens e máscaras (grandes demais para o repositório)
+images/
+images
+mascaras/
+mascaras
+processadas/
+processadas
+src/mascaras/
+src/mascaras
+!sample_treino_6k.db
+# Variáveis de ambiente
+.env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Logs de treino
+logs/
+
+# Modelos treinados (binários pesados)
+modelos/
+
+# Bancos de dados gerados localmente
+*.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
