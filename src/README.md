@@ -61,6 +61,22 @@ python treinamento/treinar_classificador.py
 # Treinar ViT
 python treinamento/treinar_classificador_vit.py
 ```
+## data 
+Resultado completo do banco fonte:
+
+Cultura	Total	      Com imagens	      Com 3 imagens
+arroz	      5.791	      4.849	            3.879
+aveia	      4.226	      4.226	            2.792
+café	      9.840	      9.028 	      641 ← crítico
+feijão	9.840	      9.665	            9.154
+milho	      9.838	      9.444	            7.997
+soja	      9.840	      7.793	            6.733 ← gargalo
+trigo	      9.840	      9.840	            9.634
+Para as 3 culturas do modelo atual (milho, soja, trigo):
+
+Milho: 7.997 disponíveis → 6.000 ok com folga de 2k
+Soja: 6.733 disponíveis → 6.000 ok, margem de apenas ~733
+Trigo: 9.634 disponíveis → 6.000 confortável
 
 ## Dependências principais
 
