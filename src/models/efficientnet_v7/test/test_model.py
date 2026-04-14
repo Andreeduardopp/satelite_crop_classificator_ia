@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import logging
+import resource
 from collections import Counter
 
 import numpy as np
@@ -47,6 +48,18 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
+
+def get_current_memory_mb():
+    """Retorna o uso atual de RAM (RSS) em MB."""
+    try:
+        with open('/proc/self/status', 'r') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    return int(line.split()[1]) / 1024
+    except:
+        # Fallback para resource se /proc não estiver disponível (ex: macOS)
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    return 0
 
 def main():
     logging.info("=== Teste Isolado EfficientNet V7 ===")
@@ -93,7 +106,15 @@ def main():
     modelo.eval()
     y_true, y_pred = [], []
     n_samples = 0
+    
+    # Monitoramento de recursos
     t_start = time.perf_counter()
+    cpu_start = time.process_time()
+    mem_start = get_current_memory_mb()
+    
+    gpu_mem_peak = 0
+    if DEVICE.type == 'cuda':
+        torch.cuda.reset_peak_memory_stats()
 
     logging.info("Iniciando inferência silenciosamente aguarde...")
     with torch.no_grad(), autocast(device_type=DEVICE.type, enabled=USE_AMP):
@@ -109,6 +130,12 @@ def main():
             n_samples += b_labels.size(0)
 
     t_total = time.perf_counter() - t_start
+    cpu_total = time.process_time() - cpu_start
+    mem_final = get_current_memory_mb()
+    peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 # MB
+    
+    if DEVICE.type == 'cuda':
+        gpu_mem_peak = torch.cuda.max_memory_allocated() / (1024 * 1024)
 
     # 5. Métricas e Output final
     acc = accuracy_score(y_true, y_pred)
@@ -133,8 +160,21 @@ def main():
     for cls, row in zip(CLASSES, cm):
         logging.info(f"{cls:>10}" + "".join(f"{v:>10}" for v in row))
 
+    # Métricas de Performance
     tempo_medio = (t_total / n_samples) * 1000
-    logging.info(f"Tempo médio de inferência puro: {tempo_medio:.2f} ms/talhão ({n_samples} talhões)")
+    cpu_medio = (cpu_total / n_samples) * 1000
+    
+    logging.info("--- Performance & Recursos ---")
+    logging.info(f"Tempo total (Wall): {t_total:.2f} s")
+    logging.info(f"Tempo total (CPU):  {cpu_total:.2f} s")
+    logging.info(f"Tempo médio/talhão: {tempo_medio:.2f} ms (Wall)")
+    logging.info(f"CPU médio/talhão:   {cpu_medio:.2f} ms (Process Time)")
+    logging.info(f"Memória RAM Atual:  {mem_final:.2f} MB")
+    logging.info(f"Memória RAM Pico:   {peak_rss:.2f} MB")
+    
+    if DEVICE.type == 'cuda':
+        logging.info(f"Memória GPU Pico:   {gpu_mem_peak:.2f} MB")
+    logging.info("------------------------------")
 
 if __name__ == "__main__":
     main()
