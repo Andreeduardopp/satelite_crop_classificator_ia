@@ -13,6 +13,8 @@ arquivos_kml_/
 .env
 .env.*
 *.env
+*.pt
+*.npy
 
 # Python
 __pycache__/

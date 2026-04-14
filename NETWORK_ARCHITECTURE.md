@@ -1,20 +1,18 @@
 # Classificador de Culturas — Arquitetura da Rede
 
-Documentação técnica do pipeline de deep learning para classificação de
-**milho / soja / trigo** a partir de imagens Sentinel-2 multi-temporais.
+Documentação técnica do pipeline de deep learning para classificação de **5 culturas (soja, milho, trigo, aveia e feijão)** a partir de imagens Sentinel-2 multi-temporais.
 
 ---
 
 ## 1. Problema
 
-Dado um **talhão** agrícola, identificar qual cultura foi plantada usando
-até 3 imagens de satélite tiradas em diferentes dias após o plantio.
+Dado um **talhão** agrícola, identificar qual cultura foi plantada usando até 3 imagens de satélite tiradas em diferentes dias após o plantio.
 
 **Por que é difícil?**
-- Milho e soja são **visualmente indistinguíveis** em RGB nos primeiros 30–56 dias
-- A janela de observação (d21, d31, d56) cobre fases de crescimento similares
-- RGB (3 bandas visíveis) não captura diferenças de canópia no infravermelho
-- O modelo precisa lidar com sequências de comprimento variável (1–3 imagens)
+- Milho, soja e feijão muitas vezes apresentam assinaturas visuais similares no estágio de desenvolvimento inicial.
+- A janela de observação cobre fases de crescimento que visualmente se confundem.
+- RGB (3 bandas visíveis) não captura diferenças de canópia no infravermelho de forma explícita, logo dependemos fortemente da extração de boas features texturais e de coloração pelo modelo.
+- O modelo precisa lidar com sequências de comprimento variável (1–3 imagens por talhão).
 
 ---
 
@@ -24,52 +22,46 @@ até 3 imagens de satélite tiradas em diferentes dias após o plantio.
 
 | Campo | Tipo | Descrição |
 |-------|------|-----------|
-| `images` | `float32 (3, 224, 224, 3)` | Até 3 fotos RGB em sequência temporal |
-| `dias` | `float32 (3,)` | Dia após plantio de cada foto, normalizado / 100 |
-| `mes` | `float32 ()` | Mês de plantio (1–12), escalar por talhão |
-| `mask` | `float32 (3,)` | 1 = timestep real, 0 = padding |
+| `images` | `float32 (T, 3, 224, 224)` | Até 3 fotos RGB em sequência temporal (normalizadas) |
+| `dias` | `float32 (T,)` | Dia após plantio de cada foto, normalizado (`/ 100`) |
+| `mes` | `int64 ()` | Mês de plantio (1–12), tratado como variável categórica (índice 0-11) |
+| `mask` | `float32 (T,)` | 1 = timestep real, 0 = padding |
 
-As imagens vêm de `./processadas/mascara_{uuid}_v_d{dia}.png` — recortes
-do talhão sobre a imagem Sentinel-2, aplicados via máscara KML.
+As imagens advêm de recortes do talhão sobre as composições do Sentinel-2, aplicadas via máscara KML e processadas.
 
 ### Base de dados
-
-- **Treino**: `sample_treino_6k.db` — 6.000 talhões por cultura (18k total)
-- **Split**: 80% treino / 20% validação, estratificado por cultura
-- **Coluna `mes`**: mês do plantio, disponível no banco, usado a partir do v6
+- **Treino e Validação**: Diversos bancos de dados em progressão, com o mais recente sendo o conjunto até `max9000.db`.
+- **Split**: 80% treino / 20% validação, estratificado por cultura para manter as proporções representativas nas classes menos prevalentes.
 
 ---
 
 ## 3. Arquitetura — Visão Geral
 
-```
+### 3.1 V7 - Pipeline End-to-End (PyTorch)
+
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                      POR TIMESTEP (compartilhado)               │
 │                                                                 │
-│  imagem (224×224×3)                                             │
+│  imagem (3×224×224)                                             │
 │       │                                                         │
-│  [Augmentation]  ← só no treino                                 │
-│  flip, rotation, zoom, contrast, brightness                     │
-│       │                                                         │
-│  [EfficientNetB0]  ← pesos ImageNet, backbone compartilhado     │
-│  7×7×1280 feature map                                           │
-│       │                                                         │
-│  [GlobalAveragePooling2D]                                       │
+│  [EfficientNetB0 (timm)]  ← pesos ImageNet, compartilhado       │
+│  → GlobalAveragePooling interno                                 │
 │  → vetor 1280-dim por timestep                                  │
 └─────────────────────────────────────────────────────────────────┘
                           │
          features (B, T=3, 1280)
                           │
 ┌─────────────────────────────────────────────────────────────────┐
-│                   FiLM CONDITIONING (v6)                        │
+│                   FiLM CONDITIONING                             │
 │                                                                 │
-│  mes (B,) → Embedding(12, 8) → tile × T → (B, T, 8)            │
+│  mes (B,) → nn.Embedding(12, 8) → expand × T → (B, T, 8)        │
 │  dias (B, T) → expand → (B, T, 1)                               │
 │                                                                 │
 │  context = concat([dia, mes_emb]) → (B, T, 9)                   │
 │       │                                                         │
-│  Dense(64, relu) → γ (B, T, 1280)  [zero-init]                  │
-│                 → β (B, T, 1280)  [zero-init]                   │
+│  Linear(64, relu) → γ (B, T, 1280)  [zero-init]                 │
+│                   → β (B, T, 1280)  [zero-init]                 │
 │                                                                 │
 │  tokens = features × (1 + γ) + β                                │
 └─────────────────────────────────────────────────────────────────┘
@@ -79,13 +71,13 @@ do talhão sobre a imagem Sentinel-2, aplicados via máscara KML.
 ┌─────────────────────────────────────────────────────────────────┐
 │                  TEMPORAL ATTENTION (2 camadas)                 │
 │                                                                 │
-│  [MultiHeadAttention]  8 cabeças, key_dim=160, dropout=0.1      │
+│  [MultiHeadAttention]  8 cabeças, dropout=0.1                   │
 │  [LayerNorm + residual]                                         │
 │                                                                 │
-│  [MultiHeadAttention]  8 cabeças, key_dim=160, dropout=0.1      │
+│  [MultiHeadAttention]  8 cabeças, dropout=0.1                   │
 │  [LayerNorm + residual]                                         │
 │                                                                 │
-│  mask impede timesteps de padding de contribuir                 │
+│  (key_padding_mask impede influências de timesteps com padding) │
 └─────────────────────────────────────────────────────────────────┘
                           │
          mean pool sobre timesteps válidos → (B, 1280)
@@ -93,12 +85,19 @@ do talhão sobre a imagem Sentinel-2, aplicados via máscara KML.
 ┌─────────────────────────────────────────────────────────────────┐
 │                     CABEÇA DE CLASSIFICAÇÃO                     │
 │                                                                 │
-│  Dense(256, relu) → Dropout(0.3)                                │
-│  Dense(3, softmax)                                              │
+│  Linear(256, relu) → Dropout(0.3)                               │
+│  Linear(5) (logits)                                             │
 │       │                                                         │
-│  [milho, soja, trigo] — probabilidades                          │
+│  [soja, milho, trigo, aveia, feijão] — logits                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 3.2 Híbrido XGBoost V1 (Two-Stage)
+
+Uma abordagem alternativa implementada para ganerar inferências mais limpas e extrair um grau de compreensibilidade maior.
+O pipeline se divide em:
+1. **Extrator de Features** (`extrator.py`): O modelo base pré-treinado V7 processa o banco e exporta as características visuais extraídas para todos os talhões, achatando-as sequencialmente numa grade linear gigantesca: `[Feature1(1280), Feature2(1280), Feature3(1280), Dia1, Dia2, Dia3, Mês, Count_img]`. Isso resulta num tabular imenso com 3.845 colunas puras.
+2. **Algoritmo de Árvore** (`train_xgboost.py`): Como o dado já não é mais imagem, entra-se com o XGBoost com as features tabuladas em RAM em pouquíssimo tempo. O algoritmo ganha vantagens naturais clássicas sobre as ramificações visuais.
 
 ---
 
@@ -106,163 +105,85 @@ do talhão sobre a imagem Sentinel-2, aplicados via máscara KML.
 
 ### 4.1 EfficientNetB0 (Extração de Features)
 
-- Pré-treinado no ImageNet (~5.3M parâmetros)
-- Aceita entrada `(224, 224, 3)` normalizada pelo preprocess interno
-- Aplicado **individualmente** a cada timestep com **pesos compartilhados**
-  (mesma rede processa d21, d31 e d56 do mesmo talhão)
-- Fase 1: backbone **congelado** — só a cabeça treina
-- Fase 2: **últimas 20 camadas** descongeladas para fine-tuning
+- Pré-treinado no ImageNet (via pacote de visão `timm`).
+- Entradas de tamanho `(3, 224, 224)` são normalizadas perfeitamente de acordo com as estatísticas exigidas pelo ImageNet.
+- A função conv passará a observar **cada imagem sequencialmente e individualmente** com **pesos compartilhados** ao longo do tempo (compartilhamento de pesos de feature extractor).
+- **Fase 1**: modelo base **congelado** — treina-se apenas a cabeça classificatória, o módulo de modulação e atenção.
+- **Fase 2**: as **últimas 20 camadas** do extrator basal são descongeladas para fine-tuning orientado aos dados agrícolas locais.
 
 ### 4.2 FiLM — Feature-wise Linear Modulation
 
-FiLM é uma técnica de condicionamento que usa informação auxiliar (aqui,
-dia + mês) para **modular as features visuais**:
+FiLM é um mecanismo de modulação em que vetores auxiliares (contexto temporal local, neste caso mês e dia) afetam **linear e intrinsecamente as características visuais** logo que saem do extrator:
 
 ```
 tokens = features × (1 + γ) + β
 ```
 
-Onde γ e β são gerados a partir do contexto temporal:
+Onde γ (ganho) e β (desvio) são derivados sob contexto:
+`context = [dia_normalizado | mes_embedding]` -> `Linear(64, relu)` -> `Linear(1280)`.
 
-```
-context = [dia_normalizado | mes_embedding]  → shape (9,)
-       ↓
-Dense(64, relu)
-       ↓
-γ = Dense(1280)  — ganho multiplicativo
-β = Dense(1280)  — deslocamento aditivo
-```
+Ambos γ e β são inicializados deliberadamente como zero no começo. Em outras palavras, `tokens = features × 1 + 0 = features`. Assim o fine-tuning temporal começa ameno como uma rede de extração simples, tornando a aprendizagem regularizada visando maior robustez no descobrimento de pesos não-lineares temporais.
 
-**Por que não apenas concatenar `mes` à feature final?**
-Concatenar no final deixa o modelo decidir *se* usa o mês. FiLM força o
-modelo a perguntar: *"dado que o plantio foi em outubro, quais features
-visuais devo amplificar ou suprimir?"* — a informação temporal permeia
-toda a representação.
+### 4.3 Mes Embedding (Sazonalidade)
 
-**Inicialização zero de γ e β:**
-No início do treino, γ=0 e β=0, então `tokens = features × 1 + 0 = features`.
-O modelo começa exatamente como sem FiLM e aprende gradualmente quanto
-usar o contexto. Isso evita instabilidade no início e permite convergência
-estável.
-
-### 4.3 Mes Embedding (novidade do v6)
-
-O mês de plantio é tratado como variável **categórica**, não contínua:
+O mês do plantio é considerado uma feição **categórica**, não linear escalada:
 
 ```python
-Embedding(input_dim=12, output_dim=8)   # índices 0-11
+nn.Embedding(12, 8)
 ```
+E não um valor linear de 1 a 12 porque fenologicamente a agricultura não lida com um encadeamento linear onde dezembro seja intrinsecamente "muito distanciado" de janeiro. A relação sazonal é cíclica por safras, o que a camada de embedding se torna excelente em extrair (ex: agrupar padrões no cluster de safrinha / inverno).
 
-**Por que embedding e não escalar normalizado?**
-Dezembro não é "mais que" novembro em termos fenológicos — o ciclo
-agrícola é circular. Um embedding aprendido pode capturar que
-setembro/outubro/novembro se comportam como um cluster (pico de
-plantio de soja) independentemente da ordem numérica.
+### 4.4 Temporal Attention (Atenção sobre Observações)
 
-O embedding de 8 dimensões (96 parâmetros totais) é pequeno o suficiente
-para não overfitar e grande o suficiente para representar padrões sazonais.
-
-### 4.4 Temporal Attention
-
-Após o FiLM, os 3 tokens (um por timestep) passam por 2 camadas de
-atenção multi-head:
-
-- A atenção permite que o modelo aprenda **qual timestep é mais informativo**
-  para cada cultura. Por exemplo: para trigo, o d100 (senescência) é muito
-  discriminativo; para milho/soja nos d21-d31, o modelo pode aprender a
-  dar mais peso ao d56.
-- A **attention mask** garante que timesteps de padding (mask=0) não
-  influenciem os timesteps reais.
-- Ao final, **mean pooling** sobre os timesteps válidos produz um vetor
-  fixo de 1280-dim independente do número de observações.
+Uma série de `nn.MultiheadAttention` capturam a dependência de um estágio final sobre uma observação particular efetuada dentro do limiar observacional.
+- Timesteps faltantes (sequências em que a amostra teve apenas 2 das 3 imagens obtidas) são mascarados com _key padding masks_ para não arruinar os coeficientes de atenção.
+- Após o cruzamento multi-nível, faz-se agregamento _Mean pooling_ em todos os timesteps ativos, obtendo um único grande sumário que unifica as leituras orbitais na janela.
 
 ---
 
-## 5. Treinamento
+## 5. Treinamento na Arquitetura (PyTorch/CUDA)
 
-### Fase 1 — Backbone Congelado
+Com a arquitetura reescrita em PyTorch, diversas otimizações nativas de GPU/CUDA de baixo nível tomam protagonismo como:
+- **AMP (`torch.amp`)** (Precisionamento de tipos matemáticos Misturado para cálculos matriciais mais densos)
+- **cuDNN benchmark embutido** para escolha rápida na rotina das passagens por convulsão.
+- **DataLoaders concorrentes com buffers em pin_memory (`non_blocking=True`)**.
 
-| Parâmetro | Valor |
-|-----------|-------|
-| Epochs | 10 (com early stopping patience=3) |
-| LR | 1e-3 |
-| Treináveis | FiLM + mes_embedding + temporal attention + cabeça |
+### Fluxo de Épocas e Congelamentos
 
-O backbone EfficientNet permanece congelado. O modelo aprende a usar
-as features ImageNet + contexto temporal para classificar.
+**Fase 1 — Extrator Congelado:**
+- Resumo de hiperparâmetros: 10 épocas e sub-patience=3 para validação.
+- _LR = 1e-3_
+- Componentes treináveis: apenas Attention, Cabeça Densa Superior, FiLM Module, e Mês Embs.
 
-### Fase 2 — Fine-tuning
+**Fase 2 — Modulação Fina:**
+- Resumo de hiperparâmetros: 15 épocas e sub-patience=4.
+- _LR = 1e-5_
+- Componentes treinados: os anteriores unidos agora às últimas **20 camadas** da EfficientNetB0 sendo lentamente refinadas do domínio ImageNet para o domínio óptico agrícola.
 
-| Parâmetro | Valor |
-|-----------|-------|
-| Epochs | 15 (com early stopping patience=4) |
-| LR | 1e-5 |
-| Treináveis | Últimas 20 camadas do backbone + tudo da Fase 1 |
-| ReduceLROnPlateau | factor=0.5, patience=2, min_lr=1e-7 |
-
-LR muito menor para não destruir os pesos ImageNet — apenas ajuste fino
-para o domínio de imagens de satélite agrícola.
-
-### Loss e Regularização
+### Função Custos e Combate a Enviezamento
 
 ```python
-loss = CategoricalCrossentropy(label_smoothing=0.1)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 ```
-
-- **Label smoothing 0.1**: suaviza os targets de [0,1] para [0.033, 0.9].
-  Evita que o modelo fique excessivamente confiante em classes ambíguas
-  (milho/soja com aparência similar).
-- **Class weights**: calculados automaticamente para compensar qualquer
-  desbalanceamento entre culturas.
-- **Dropout(0.3)**: regularização na cabeça de classificação.
+- A prática de *label smoothing* (`0.1`) é crítica pois ameniza classificações dicotomicamente dogmáticas do modelo num grupo onde soja/milho jovens são altamente irreconhecíveis em partes isoladas.
+- Aplicação ativa de _Class Weights_ dentro da CrossEntropyLoss de forma automatizada por lotes para combater eventuais assimetrias.
 
 ---
 
-## 6. Histórico de Versões e Resultados
+## 6. Histórico de Versões e Resultados Recentes
 
-| Versão | Novidade | Val Acc | F1 macro | F1 milho | F1 soja | F1 trigo |
-|--------|----------|---------|----------|----------|---------|---------|
-| v2 (EfficientNet) | Baseline temporal com MHA | ~70% | 0.70 | 0.54 | 0.53 | 1.00 |
-| v3 | 6k/classe + FiLM(dia) + augment + label smooth | ~70% | 0.70 | ~0.54 | ~0.54 | 1.00 |
-| XGBoost (sigmoids) | Tabular com mes + last_dia | 90.8% | 0.908 | 0.856 | 0.869 | 1.00 |
-| v5 (CNN+XGBoost) | MobileNetV3 emb + XGBoost | 88.3% | 0.882 | 0.813 | 0.834 | 1.00 |
-| **v5** | **MobileNetV3 + FiLM(dia) + Late Fusion(mes)** | ? | ? | ? | ? | ? |
-| **v6** | **v3 + FiLM(dia, mes_embedding)** | ? | ? | ? | ? | 1.00 |
+O registro demonstra a transição crucial da arquitetura para a de **v7**, capaz de distinguir **5 culturas** (em contraponto aos trabalhos de base de 3 categorias). Abaixo encontram-se as métricas consolidadas sobre os artefatos gerados:
 
-**Diagnóstico do teto em 70%:**
-Ambos os modelos v2 e v3 atingem o mesmo teto. O XGBoost sobre vetores
-sigmoides (features tabulares de outros modelos) chega a 91% — a diferença
-principal é que ele tem acesso a `mes`. O v6 testa essa hipótese diretamente.
+| Versão | Novidade / Estruturação | Acc global | F1-macro | F1 soja | F1 milho | F1 trigo | F1 aveia | F1 feijão |
+|--------|--------------------------|------------|----------|---------|----------|----------|----------|-----------|
+| **v2** | CNN Temporal (3 classes) | ~70% | 0.700 | 0.53 | 0.54 | 1.00 | - | - |
+| **XGBoost** | XGBoost nas relativas | 90.8% | 0.908 | 0.869 | 0.856 | 1.00 | - | - |
+| **v6** | FiLM de calendário (TF) | - | - | - | - | - | - | - |
+| **v7** | PyTorch, **5 Classes, 2500 max samples** | 85.7% | 0.856 | 0.820 | 0.719 | 0.995 | 0.990 | 0.756 |
+| **v7** | PyTorch, **5 Classes, 6000 max samples** | **87.7%** | **0.876** | **0.853** | **0.754** | **1.000** | **0.997** | **0.776** |
+| **v7** | PyTorch, **5 Classes, 9000 max samples** | 85.5% | 0.854 | 0.822 | 0.738 | 1.000 | 0.994 | 0.718 |
+| **Híbrido v1** | Extrator DL bruto + XGBoost Tabular | 85.2% | 0.850 | 0.828 | 0.703 | 1.000 | 1.000 | 0.722 |
 
----
+> **Análise do Híbrido V1:** O Híbrido V1 não superou a versão puramente neural (`v7`), alcançando F1-macro de 0.850 (versus 0.876). Uma causa documentada é a forma como o `extrator.py` original extrai a predição da EfficientNet. Ele obtém o _backbone bruto_ (ignorando as essenciais camadas FiLM e Temporal Attention do V7) e concatena no longo eixo espacial (3x1280), delegando todo o trabalho de entendimento seqüencial ao XGBoost, desprivilegiando interações temporais vitais de plantio da soja e milho (que caíram em F1).
 
-## 7. Por Que `mes` É o Feature Mais Importante
-
-O XGBoost revelou que `last_dia` (22% de importância) e `mes` (10.3%)
-dominam a classificação. Por que?
-
-**Soja** é plantada quase exclusivamente em setembro/outubro/novembro
-(91% das amostras). **Milho** tem dois ciclos: verão (set/out) e safrinha
-(jan/fev). **Trigo** é de inverno (abr/mai/jun).
-
-Isso significa:
-- Um talhão com `mes = fevereiro` **não pode ser soja** (quase certamente é
-  milho safrinha ou trigo de ciclo tardio)
-- Um talhão com `mes = outubro` pode ser milho ou soja, mas a distribuição
-  muda muito
-
-O CNN v3 via apenas imagens RGB + dia relativo ao plantio. Sem saber
-o mês absoluto, ele não consegue usar essa informação fenológica crítica.
-
----
-
-## 8. Arquivos Relevantes
-
-| Arquivo | Descrição |
-|---------|-----------|
-| [src/treinamento/treinar_classificador_v6.py](src/treinamento/treinar_classificador_v6.py) | Script de treino v6 (este modelo) |
-| [src/treinamento/treinar_classificador_v3.py](src/treinamento/treinar_classificador_v3.py) | Baseline v3 (sem `mes`) |
-| [src/treinamento/treinar_xgboost_sigmoides.py](src/treinamento/treinar_xgboost_sigmoides.py) | XGBoost tabular (referência 91%) |
-| [src/dados/processamento_sentinel_indices.py](src/dados/processamento_sentinel_indices.py) | Downloader NDVI/NDWI/NDBI (para v4) |
-| [DATASET_IMPROVEMENT_PLAN.md](DATASET_IMPROVEMENT_PLAN.md) | Plano de melhoria do dataset |
-| `sample_treino_6k.db` | 18k talhões com coluna `mes` |
+> **Observação dos resultados (v7):** Observamos que a arquitetura em conjunto ao embedding alcança performances notórias quase absolutas para `trigo` e `aveia` graças também aos claros marcadores fenológicos e desvios de plantio. Apesar da extrema confusão inerente que paira sobre as classes `soja`, `milho` e `feijão` nas estepes do dia a dia, mantivemos e elevamos o sucesso nos exames amplos girando firmemente a baliza em ~85%-87% de F1-macro com base de treinamento alargada.
