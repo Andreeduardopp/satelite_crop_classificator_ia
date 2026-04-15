@@ -1,0 +1,15 @@
+{
+    "backbone": "resnet50",
+    "feature_dim": 2048,
+    "f1_macro": 0.06301469695129357,
+    "accuracy": 0.18699538638985005,
+    "f1_per_class": {
+        "soja": 0.31507348475646785,
+        "milho": 0.0,
+        "trigo": 0.0,
+        "aveia": 0.0,
+        "feij\u00e3o": 0.0
+    },
+    "tempo_medio_ms": 92.55180482987355,
+    "tempo_treino_minutos": 38.60507862166666
+}

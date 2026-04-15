@@ -230,6 +230,7 @@ def treinar_backbone(backbone_name: str):
     criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=LABEL_SMOOTHING)
 
     # 6. Fase 1: Backbone congelado
+    t_train_start = time.perf_counter()
     logging.info("=== Fase 1: Cabeca + FiLM + Attention (base congelada) ===")
     opt = torch.optim.Adam(
         (p for p in modelo.parameters() if p.requires_grad), lr=LR_FASE1
@@ -249,6 +250,10 @@ def treinar_backbone(backbone_name: str):
     )
     treinar_fase(modelo, loader_tr, loader_val, opt, criterion,
                  EPOCHS_FASE2, cw_tensor, "Fase2", patience=4, scaler=scaler)
+
+    t_train_total = time.perf_counter() - t_train_start
+    train_time_mins = t_train_total / 60.0
+    logging.info(f"Tempo total de treinamento (Fases 1 + 2): {train_time_mins:.2f} minutos")
 
     # 8. Salvar pesos
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
@@ -308,13 +313,15 @@ def treinar_backbone(backbone_name: str):
             'accuracy': float(acc),
             'f1_per_class': {c: float(v) for c, v in zip(CLASSES, f1_per_class)},
             'tempo_medio_ms': float(tempo_medio),
+            'tempo_treino_minutos': float(train_time_mins),
         }, f, indent=4)
 
     logging.info(f"Metricas salvas: {m_path}")
+    logging.info(f"Tempo total de treino de {backbone_name}: {train_time_mins:.2f} minutos")
     logging.info(f"Log completo: {log_file}")
     logging.info("="*70 + "\n")
 
-    return acc, f1_macro
+    return acc, f1_macro, train_time_mins
 
 
 def main():
@@ -338,19 +345,19 @@ def main():
         logging.info(f"\n{'#'*70}")
         logging.info(f"# TREINANDO: {bb}")
         logging.info(f"{'#'*70}\n")
-        acc, f1 = treinar_backbone(bb)
-        resultados[bb] = {'accuracy': acc, 'f1_macro': f1}
+        acc, f1, train_time_mins = treinar_backbone(bb)
+        resultados[bb] = {'accuracy': acc, 'f1_macro': f1, 'tempo_treino_minutos': train_time_mins}
 
     # Resumo final
     if len(resultados) > 1:
         print("\n" + "="*70)
         print("RESUMO DO ENSEMBLE — Resultados Individuais")
         print("="*70)
-        print(f"{'Backbone':<25} {'Accuracy':>10} {'F1-macro':>10}")
-        print("-"*50)
+        print(f"{'Backbone':<25} {'Accuracy':>10} {'F1-macro':>10} {'Tempo Treino (min)':>18}")
+        print("-"*75)
         for bb, r in resultados.items():
-            print(f"{bb:<25} {r['accuracy']:>10.4f} {r['f1_macro']:>10.4f}")
-        print("="*70)
+            print(f"{bb:<25} {r['accuracy']:>10.4f} {r['f1_macro']:>10.4f} {r.get('tempo_treino_minutos', 0):>18.2f}")
+        print("="*75)
         print("Proximo passo: python extrator.py")
 
 

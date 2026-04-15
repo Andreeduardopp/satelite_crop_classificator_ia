@@ -1,0 +1,15 @@
+{
+    "backbone": "convnext_tiny",
+    "feature_dim": 768,
+    "f1_macro": 0.8398432185907312,
+    "accuracy": 0.8269896193771626,
+    "f1_per_class": {
+        "soja": 0.7830056179775281,
+        "milho": 0.6641015775298191,
+        "trigo": 0.9988895058300944,
+        "aveia": 0.98828125,
+        "feij\u00e3o": 0.7649381416162148
+    },
+    "tempo_medio_ms": 6.469995458477341,
+    "tempo_treino_minutos": 69.51651088166666
+}
