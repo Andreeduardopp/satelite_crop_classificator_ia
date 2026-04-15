@@ -50,7 +50,10 @@ class TemporalCulturaModel(nn.Module):
             p.requires_grad = False
 
         # Projeção para dimensão comum (normaliza backbones diferentes)
-        self.proj = nn.Linear(self.feature_dim, PROJ_DIM)
+        self.proj = nn.Sequential(
+            nn.Linear(self.feature_dim, PROJ_DIM),
+            nn.LayerNorm(PROJ_DIM),
+        )
 
         # Calcular num_heads compatível com PROJ_DIM
         num_heads = 8
