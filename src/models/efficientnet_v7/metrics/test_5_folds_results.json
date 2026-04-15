@@ -1,0 +1,46 @@
+{
+    "folds": {
+        "fold_1": {
+            "acc": 0.8544,
+            "f1_macro": 0.8528845091977117,
+            "tempo_medio_ms": 87.30636696000002,
+            "cpu_medio_ms": 49.75,
+            "gpu_mem_peak_mb": 2082.544921875
+        },
+        "fold_2": {
+            "acc": 0.8624,
+            "f1_macro": 0.8609350989528595,
+            "tempo_medio_ms": 37.95539431999932,
+            "cpu_medio_ms": 3.85,
+            "gpu_mem_peak_mb": 1319.32275390625
+        },
+        "fold_3": {
+            "acc": 0.836,
+            "f1_macro": 0.8348011879489645,
+            "tempo_medio_ms": 39.54488928000064,
+            "cpu_medio_ms": 3.725,
+            "gpu_mem_peak_mb": 1319.32275390625
+        },
+        "fold_4": {
+            "acc": 0.8544,
+            "f1_macro": 0.8539487567448468,
+            "tempo_medio_ms": 37.5346859199999,
+            "cpu_medio_ms": 3.7624999999999997,
+            "gpu_mem_peak_mb": 1319.32275390625
+        },
+        "fold_5": {
+            "acc": 0.848,
+            "f1_macro": 0.8473494188026697,
+            "tempo_medio_ms": 37.82329312000075,
+            "cpu_medio_ms": 3.725,
+            "gpu_mem_peak_mb": 1319.32275390625
+        }
+    },
+    "media_acuracia": 0.85104,
+    "std_acuracia": 0.008798545334315247,
+    "media_f1_macro": 0.8499837943294104,
+    "std_f1_macro": 0.008735188808240282,
+    "media_tempo_ms_amostra": 48.032925920000125,
+    "media_cpu_ms_amostra": 12.9625,
+    "media_gpu_peak_mb": 1471.9671875
+}

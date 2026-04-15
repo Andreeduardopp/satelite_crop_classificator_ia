@@ -406,6 +406,15 @@ def treinar_fase(
 # -- Main ----------------------------------------------------------------------
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--db_path', type=str, default=DB_PATH)
+    parser.add_argument('--out_dir', type=str, default=MODELO_SAIDA)
+    args = parser.parse_args()
+
+    db_path_atual = args.db_path
+    modelo_saida_atual = args.out_dir
+
     torch.manual_seed(SEED)
     np.random.seed(SEED)
 
@@ -415,8 +424,8 @@ def main() -> None:
     logging.info(f"Dispositivo: {DEVICE} | AMP: {USE_AMP} | cuDNN benchmark: {torch.backends.cudnn.benchmark}")
 
     # 1. Carregar dados
-    logging.info(f"Carregando dados de: {DB_PATH}")
-    registros, labels, meses = carregar_dados(DB_PATH)
+    logging.info(f"Carregando dados de: {db_path_atual}")
+    registros, labels, meses = carregar_dados(db_path_atual)
     total_imgs = sum(len(r) for r in registros)
     logging.info(f"Total: {len(registros)} talhoes, {total_imgs} imagens")
 
@@ -473,6 +482,7 @@ def main() -> None:
 
     # -- Fase 1: Base congelada ------------------------------------------------
     logging.info("=== Fase 1: Treinando cabeca + FiLM + temporal attention (base congelada) ===")
+    train_start_time = time.perf_counter()
     opt = torch.optim.Adam(
         (p for p in modelo.parameters() if p.requires_grad), lr=LR_FASE1,
     )
@@ -491,9 +501,12 @@ def main() -> None:
     treinar_fase(modelo, loader_tr, loader_val, opt, criterion,
                  EPOCHS_FASE2, cw_tensor, "Fase2", patience=4, scaler=scaler)
 
+    train_total_time = time.perf_counter() - train_start_time
+    logging.info(f"Tempo total de treinamento: {train_total_time:.2f} segundos")
+
     # -- Salvar ----------------------------------------------------------------
-    os.makedirs(MODELO_SAIDA, exist_ok=True)
-    peso_path = os.path.join(MODELO_SAIDA, 'pesos.pt')
+    os.makedirs(modelo_saida_atual, exist_ok=True)
+    peso_path = os.path.join(modelo_saida_atual, 'pesos.pt')
     torch.save(modelo.state_dict(), peso_path)
     logging.info(f"Pesos salvos em: {peso_path}")
 
@@ -541,16 +554,16 @@ def main() -> None:
 
     # -- Salvar metricas -------------------------------------------------------
     try:
-        metrics_dir = os.path.join(_HERE, 'metrics')
-        os.makedirs(metrics_dir, exist_ok=True)
+        os.makedirs(modelo_saida_atual, exist_ok=True)
         metrics_path = os.path.join(
-            metrics_dir, f"metrics_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+            modelo_saida_atual, f"metrics_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
         )
         metrics_dict = {
             "f1_macro": float(f1_macro),
             "accuracy": float(acc),
             "f1_per_class": {c: float(f) for c, f in zip(CLASSES, f1_per_class)},
             "tempo_medio_ms": float(tempo_medio),
+            "tempo_treino_segundos": float(train_total_time),
         }
         with open(metrics_path, "w", encoding="utf-8") as m_f:
             json.dump(metrics_dict, m_f, indent=4)

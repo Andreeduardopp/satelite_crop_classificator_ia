@@ -27,16 +27,17 @@ logging.basicConfig(
 # ── Paths ─────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DB_ORIGEM    = os.path.join(BASE_DIR, 'src', 'bkp', '26-04-06.dados.db')
-DB_TREINO    = os.path.join(BASE_DIR, 'sample_treino_max9000.db')
-DB_TESTE     = os.path.join(BASE_DIR, 'sample_teste_250.db')
+DIR_TREINO   = os.path.join(BASE_DIR, 'datasets', 'dataset_treino')
+DIR_TESTE    = os.path.join(BASE_DIR, 'datasets', 'dataset_teste')
 
 TABELA       = 'culturas'
 
 # Culturas alvo — incluímos ambas as grafias de feijão por segurança
 CULTURAS     = ['soja', 'milho', 'trigo', 'aveia', 'feijão', 'feijao']
 
+N_DATASETS   = 5
 N_MAX_TREINO = 9000   # até 9000 para treino
-N_TESTE      = 250    # por cultura (reservado primeiro)
+N_TESTE      = 250    # por cultura por dataset (reservado primeiro)
 N_IMAGENS    = 3      # exigir sequência temporal completa
 
 
@@ -79,64 +80,109 @@ def criar_tabela(cursor: sqlite3.Cursor) -> None:
 
 # ── Geração dos bancos ───────────────────────────────────────────────────
 
-def gerar_bancos(origem: sqlite3.Connection,
-                 destino_treino: sqlite3.Connection,
-                 destino_teste: sqlite3.Connection) -> None:
-    cur_treino = destino_treino.cursor()
-    cur_teste  = destino_teste.cursor()
-    criar_tabela(cur_treino)
-    criar_tabela(cur_teste)
+def gerar_datasets_multiplos() -> None:
+    import random
+    os.makedirs(DIR_TREINO, exist_ok=True)
+    os.makedirs(DIR_TESTE, exist_ok=True)
 
-    for cultura in CULTURAS:
-        logging.info(f"Processando cultura: {cultura}")
+    # Prepara as conexões
+    conexoes = []
+    for i in range(1, N_DATASETS + 1):
+        db_treino = os.path.join(DIR_TREINO, f"sample_treino_max9000_v{i}.db")
+        db_teste  = os.path.join(DIR_TESTE, f"sample_teste_250_v{i}.db")
+        
+        conn_treino = sqlite3.connect(db_treino)
+        conn_teste  = sqlite3.connect(db_teste)
+        
+        criar_tabela(conn_treino.cursor())
+        criar_tabela(conn_teste.cursor())
+        
+        conexoes.append({
+            'treino': conn_treino,
+            'teste': conn_teste,
+            'path_treino': db_treino,
+            'path_teste': db_teste
+        })
 
-        # Busca todos os candidatos (ORDER BY RANDOM para embaralhar)
-        rows = origem.execute(
-            f"""
-            SELECT cultura, mes, imagens_processadas
-            FROM   {TABELA}
-            WHERE  cultura = ?
-              AND  imagens_processadas IS NOT NULL
-              AND  imagens_processadas != '[]'
-            ORDER BY RANDOM()
-            """,
-            (cultura,)
-        ).fetchall()
+    with sqlite3.connect(DB_ORIGEM) as origem:
+        for cultura in CULTURAS:
+            logging.info(f"Processando cultura: {cultura}")
 
-        # Filtra registros válidos (3 imagens na sequência temporal)
-        valid_rows = []
-        descartados_contagem = 0
+            # Busca todos os candidatos (ORDER BY RANDOM para embaralhar)
+            rows = origem.execute(
+                f"""
+                SELECT cultura, mes, imagens_processadas
+                FROM   {TABELA}
+                WHERE  cultura = ?
+                  AND  imagens_processadas IS NOT NULL
+                  AND  imagens_processadas != '[]'
+                ORDER BY RANDOM()
+                """,
+                (cultura,)
+            ).fetchall()
 
-        for r in rows:
-            paths = parse_paths(r[2])
-            if paths is None or len(paths) != N_IMAGENS:
-                descartados_contagem += 1
-                continue
-            valid_rows.append(r)
+            # Filtra registros válidos (3 imagens na sequência temporal)
+            valid_rows = []
+            descartados_contagem = 0
 
-        # Separa garantindo as 200 amostras para teste
-        teste_rows = valid_rows[:N_TESTE]
-        treino_rows = valid_rows[N_TESTE : N_TESTE + N_MAX_TREINO]
+            for r in rows:
+                paths = parse_paths(r[2])
+                if paths is None or len(paths) != N_IMAGENS:
+                    descartados_contagem += 1
+                    continue
+                valid_rows.append(r)
 
-        # Insere no banco de treino
-        cur_treino.executemany(
-            f"INSERT INTO {TABELA} (cultura, mes, imagens_processadas) VALUES (?, ?, ?)",
-            treino_rows,
-        )
-        # Insere no banco de teste
-        cur_teste.executemany(
-            f"INSERT INTO {TABELA} (cultura, mes, imagens_processadas) VALUES (?, ?, ?)",
-            teste_rows,
-        )
+            # Para evitar vazamento de dados, separamos globalmente testes e treinos:
+            total_teste_necessario = N_TESTE * N_DATASETS
+            
+            if len(valid_rows) < total_teste_necessario:
+                logging.warning(
+                    f"Atenção: cultura {cultura} possui {len(valid_rows)} registros válidos. "
+                    f"Menos que os {total_teste_necessario} ideais para testes exclusivos."
+                )
+            
+            pool_teste = valid_rows[:total_teste_necessario]
+            pool_treino = valid_rows[total_teste_necessario:]
 
-        logging.info(
-            f"  {cultura}: treino={len(treino_rows)} (max {N_MAX_TREINO}), "
-            f"teste={len(teste_rows)} (alvo {N_TESTE}), "
-            f"descartados={descartados_contagem}"
-        )
+            # Distribuir para cada dataset
+            for i in range(N_DATASETS):
+                idx_inicio_teste = i * N_TESTE
+                idx_fim_teste = (i + 1) * N_TESTE
+                teste_rows = pool_teste[idx_inicio_teste:idx_fim_teste]
+                
+                # Para o treino, randomizamos o pool restante para ter variação entre os 5 datasets
+                if pool_treino:
+                    random.shuffle(pool_treino)
+                treino_rows = pool_treino[:N_MAX_TREINO]
+                
+                conn_treino = conexoes[i]['treino']
+                conn_teste = conexoes[i]['teste']
+                
+                if treino_rows:
+                    conn_treino.executemany(
+                        f"INSERT INTO {TABELA} (cultura, mes, imagens_processadas) VALUES (?, ?, ?)",
+                        treino_rows,
+                    )
+                if teste_rows:
+                    conn_teste.executemany(
+                        f"INSERT INTO {TABELA} (cultura, mes, imagens_processadas) VALUES (?, ?, ?)",
+                        teste_rows,
+                    )
 
-    destino_treino.commit()
-    destino_teste.commit()
+            logging.info(
+                f"  {cultura}: total_valido={len(valid_rows)}, "
+                f"descartados={descartados_contagem}. "
+                f"Distribuição concluída para {N_DATASETS} datasets."
+            )
+
+    # Fechar, comitar e verificar conexões
+    for i, cx in enumerate(conexoes):
+        cx['treino'].commit()
+        cx['teste'].commit()
+        cx['treino'].close()
+        cx['teste'].close()
+        verificar_banco(cx['path_treino'], f"TREINO v{i+1}")
+        verificar_banco(cx['path_teste'],  f"TESTE v{i+1}")
 
 
 # ── Verificação ──────────────────────────────────────────────────────────
@@ -162,16 +208,11 @@ def main() -> None:
         return
 
     logging.info(f"Origem: {DB_ORIGEM}")
-    logging.info(f"Treino → {DB_TREINO}  (max {N_MAX_TREINO}/cultura)")
-    logging.info(f"Teste  → {DB_TESTE}  ({N_TESTE}/cultura)")
+    logging.info(f"Gerando {N_DATASETS} datasets...")
+    logging.info(f"Treinos → {DIR_TREINO}  (max {N_MAX_TREINO}/cultura)")
+    logging.info(f"Testes  → {DIR_TESTE}  ({N_TESTE}/cultura exclusivo por dataset)")
 
-    with sqlite3.connect(DB_ORIGEM) as origem, \
-         sqlite3.connect(DB_TREINO) as treino, \
-         sqlite3.connect(DB_TESTE)  as teste:
-        gerar_bancos(origem, treino, teste)
-
-    verificar_banco(DB_TREINO, "TREINO")
-    verificar_banco(DB_TESTE,  "TESTE")
+    gerar_datasets_multiplos()
 
     logging.info("Pronto!")
 
