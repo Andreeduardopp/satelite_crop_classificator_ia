@@ -6,17 +6,17 @@ O XGBoost recebe features de 3 perspectivas diferentes (EfficientNet, ResNet,
 ConvNeXt), cada uma capturando padrões visuais distintos. Ele aprende qual
 modelo confiar para cada classe.
 
-Feature layout final:
-    [0    : 1280]  EfficientNetB0 pooled          — 1280
-    [1280 : 1285]  EfficientNetB0 probabilities    — 5
-    [1285 : 3333]  ResNet50 pooled                 — 2048
-    [3333 : 3338]  ResNet50 probabilities           — 5
-    [3338 : 4106]  ConvNeXt-Tiny pooled             — 768
-    [4106 : 4111]  ConvNeXt-Tiny probabilities      — 5
-    [4111 : 4114]  Dias                             — 3
-    [4114 : 4115]  Mes                              — 1
-    [4115 : 4116]  Count imagens                    — 1
-    Total: 4116
+Feature layout final (todos os backbones projetados para PROJ_DIM=512):
+    [0    :  512]  EfficientNetB0 pooled            — 512
+    [ 512 :  517]  EfficientNetB0 probabilities     — 5
+    [ 517 : 1029]  ResNet50 pooled                  — 512
+    [1029 : 1034]  ResNet50 probabilities            — 5
+    [1034 : 1546]  ConvNeXt-Tiny pooled              — 512
+    [1546 : 1551]  ConvNeXt-Tiny probabilities       — 5
+    [1551 : 1554]  Dias                              — 3
+    [1554 : 1555]  Mes                               — 1
+    [1555 : 1556]  Count imagens                     — 1
+    Total: 1556
 
 Uso:
     python extrator.py
@@ -37,7 +37,7 @@ from data import (
     carregar_dados, TemporalCulturaDataset,
     CLASSES, DB_TREINO, DB_TESTE, DEVICE, USE_AMP, SEED
 )
-from model import TemporalCulturaModel, BACKBONE_CONFIG
+from model import TemporalCulturaModel, BACKBONE_CONFIG, PROJ_DIM
 
 # -- Configurações -------------------------------------------------------------
 _HERE        = os.path.dirname(os.path.abspath(__file__))
@@ -64,7 +64,7 @@ def carregar_modelo(backbone_name: str):
     modelo = TemporalCulturaModel(backbone_name, len(CLASSES)).to(DEVICE)
     modelo.load_state_dict(torch.load(peso_path, map_location=DEVICE))
     modelo.eval()
-    log.info(f"  {backbone_name}: carregado (feature_dim={modelo.feature_dim})")
+    log.info(f"  {backbone_name}: carregado (backbone_dim={modelo.feature_dim}, proj_dim={PROJ_DIM})")
     return modelo
 
 
@@ -121,7 +121,7 @@ def extrair_features(db_path: str, prefixo: str, modelos: dict):
                 pooled, probs = extrair_batch(
                     modelos[bb_name], images_dev, dias_dev, mes_dev, mask_dev
                 )
-                parts.append(pooled)   # (B, feature_dim)
+                parts.append(pooled)   # (B, PROJ_DIM)
                 parts.append(probs)    # (B, 5)
 
             # Metadados
@@ -187,8 +187,8 @@ def main():
         log.warning(f"Modelos faltando: {faltando}")
         log.warning("O ensemble funcionará com os modelos disponíveis.")
 
-    # Calcular tamanho esperado
-    total_features = sum(m.feature_dim + len(CLASSES) for m in modelos.values()) + 5
+    # Calcular tamanho esperado (pooled agora é PROJ_DIM para todos os backbones)
+    total_features = sum(PROJ_DIM + len(CLASSES) for _ in modelos.values()) + 5
     log.info(f"Features por amostra: {total_features}")
 
     # 2. Extrair

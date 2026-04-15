@@ -24,6 +24,7 @@ BACKBONE_CONFIG = {
 }
 
 MES_EMBED_DIM = 8
+PROJ_DIM = 512
 
 
 class TemporalCulturaModel(nn.Module):
@@ -48,16 +49,19 @@ class TemporalCulturaModel(nn.Module):
         for p in self.backbone.parameters():
             p.requires_grad = False
 
-        # Calcular num_heads compatível com feature_dim
+        # Projeção para dimensão comum (normaliza backbones diferentes)
+        self.proj = nn.Linear(self.feature_dim, PROJ_DIM)
+
+        # Calcular num_heads compatível com PROJ_DIM
         num_heads = 8
-        while self.feature_dim % num_heads != 0:
+        while PROJ_DIM % num_heads != 0:
             num_heads -= 1
 
         # FiLM conditioning: concat(dia, mes_emb) → gamma, beta
         self.mes_embedding = nn.Embedding(12, MES_EMBED_DIM)
         self.film_hidden = nn.Linear(1 + MES_EMBED_DIM, 64)
-        self.film_gamma = nn.Linear(64, self.feature_dim)
-        self.film_beta = nn.Linear(64, self.feature_dim)
+        self.film_gamma = nn.Linear(64, PROJ_DIM)
+        self.film_beta = nn.Linear(64, PROJ_DIM)
         nn.init.zeros_(self.film_gamma.weight)
         nn.init.zeros_(self.film_gamma.bias)
         nn.init.zeros_(self.film_beta.weight)
@@ -65,17 +69,17 @@ class TemporalCulturaModel(nn.Module):
 
         # 2 camadas de temporal self-attention
         self.attn1 = nn.MultiheadAttention(
-            self.feature_dim, num_heads, dropout=0.1, batch_first=True
+            PROJ_DIM, num_heads, dropout=0.1, batch_first=True
         )
-        self.norm1 = nn.LayerNorm(self.feature_dim)
+        self.norm1 = nn.LayerNorm(PROJ_DIM)
         self.attn2 = nn.MultiheadAttention(
-            self.feature_dim, num_heads, dropout=0.1, batch_first=True
+            PROJ_DIM, num_heads, dropout=0.1, batch_first=True
         )
-        self.norm2 = nn.LayerNorm(self.feature_dim)
+        self.norm2 = nn.LayerNorm(PROJ_DIM)
 
         # Cabeça de classificação
         self.head = nn.Sequential(
-            nn.Linear(self.feature_dim, 256),
+            nn.Linear(PROJ_DIM, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(256, num_classes),
@@ -85,10 +89,10 @@ class TemporalCulturaModel(nn.Module):
         """Forward completo até o vetor pooled (antes da cabeça)."""
         B, T = images.shape[:2]
 
-        # Backbone
+        # Backbone → projeção
         imgs_flat = images.reshape(B * T, *images.shape[2:])
         feats_flat = self.backbone(imgs_flat)
-        features = feats_flat.reshape(B, T, -1)
+        features = self.proj(feats_flat).reshape(B, T, -1)
 
         # FiLM
         mes_emb = self.mes_embedding(mes).unsqueeze(1).expand(-1, T, -1)
