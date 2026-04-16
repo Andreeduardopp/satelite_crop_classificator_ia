@@ -1,0 +1,20 @@
+{
+    "f1_macro": 0.862611417301937,
+    "accuracy": 0.8632,
+    "f1_per_class": {
+        "soja": 0.8214971209213052,
+        "milho": 0.750524109014675,
+        "trigo": 1.0,
+        "aveia": 1.0,
+        "feij\u00e3o": 0.7410358565737052
+    },
+    "n_features": 1556,
+    "n_models": 3,
+    "best_iteration": 92,
+    "training_time_s": 31.041933298110962,
+    "inference_ms_per_sample": 0.002205276489257812,
+    "component_importance": {
+        "efficientnet_b0_pooled": 0.8142056465148926,
+        "efficientnet_b0_probs": 0.0008227003272622824
+    }
+}
