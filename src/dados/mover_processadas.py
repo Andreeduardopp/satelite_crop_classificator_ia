@@ -69,9 +69,9 @@ def lista_datas_cultura(cultura):
     return culturas[cultura]
 
 
-def data_arquivos():
+def data_arquivos(input_csv='dataframe_20k.csv', output_csv='dataframe_processado.csv'):
     logging.info("Iniciando processamento...")
-    df = pd.read_csv('dataframe.csv')
+    df = pd.read_csv(input_csv)
     
     culturas = df['cultura'].tolist()
     all_areas = [0 for i in range(len(culturas))]
@@ -122,10 +122,12 @@ def data_arquivos():
     df['area'] = all_areas
     df['imagens_baixadas'] = all_imagens_baixadas
     df['imagens_processadas'] = all_imagens_processadas
-    df.to_csv('dataframe_processado.csv', index=False) # index=False is a good practice
+    df.to_csv(output_csv, index=False)
 
     logging.info("Finalizado..")
 
-data_arquivos()
+
+if __name__ == '__main__':
+    data_arquivos()
 
 

@@ -15,7 +15,16 @@ from dados.processamento_sentinel_Hub import request_sentinel_hub
 from dados.processamento_imagens import aplica_mascara, treshold_indice, calcular_area2
 # from main import prediz_sigmoide
 
+PASTA_LOGS = './logs'
+os.makedirs(PASTA_LOGS, exist_ok=True)
+ARQUIVO_LOG_ERRO = os.path.join(PASTA_LOGS, 'error_pipeline.txt')
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+_error_file_handler = logging.FileHandler(ARQUIVO_LOG_ERRO)
+_error_file_handler.setLevel(logging.WARNING)
+_error_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(_error_file_handler)
 
 
 
@@ -59,82 +68,114 @@ def lista_datas_cultura(cultura):
 # lista_arquivos['mes'] = 'split 3.2'
 # lista_arquivos['path'] = 'string toda'
 
+DB_NOME = 'dados.db'
+DB_TABELA = 'culturas'
+PASTA_IMAGENS = './imagens_20k'
+CULTURAS_PERMITIDAS = {'aveia', 'trigo', 'feijão', 'feijao', 'milho', 'soja'}
+
+
+def inicializar_db():
+    conn = sqlite3.connect(DB_NOME)
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {DB_TABELA} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cultura TEXT,
+            ref_infra_v TEXT UNIQUE,
+            ref_rgb TEXT,
+            data TEXT,
+            mes INTEGER,
+            path TEXT,
+            area REAL,
+            imagens_baixadas TEXT,
+            imagens_processadas TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def ja_processado(ref_infra_v):
+    conn = sqlite3.connect(DB_NOME)
+    row = conn.execute(
+        f"SELECT imagens_baixadas FROM {DB_TABELA} WHERE ref_infra_v = ?", (ref_infra_v,)
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return False
+    imagens = ast.literal_eval(row[0]) if isinstance(row[0], str) else row[0]
+    return bool(imagens)
+
+
+def inserir_registro(row, area, imagens_baixadas, imagens_processadas):
+    conn = sqlite3.connect(DB_NOME)
+    conn.execute(f"""
+        INSERT INTO {DB_TABELA} (cultura, ref_infra_v, ref_rgb, data, mes, path, area, imagens_baixadas, imagens_processadas)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ref_infra_v) DO UPDATE SET
+            area=excluded.area,
+            imagens_baixadas=excluded.imagens_baixadas,
+            imagens_processadas=excluded.imagens_processadas
+    """, (
+        row['cultura'], row['ref_infra_v'], row['ref_rgb'],
+        str(row['data']), int(row['mes']), row['path'],
+        area, str(imagens_baixadas), str(imagens_processadas)
+    ))
+    conn.commit()
+    conn.close()
+
+
 def baixar_imagens():
+    inicializar_db()
     data_frame = pd.read_csv('dataframe_processado.csv')
 
-    lista_datas = data_frame['data'].to_list()
-    lista_path = data_frame['path'].to_list()
-    lista_imagem = data_frame['ref_infra_v'].to_list()
-
-    # indice_aleatorio = np.random.randint(1024, 4096)
-    # indice_aleatorio = 200
-
-    cultura_l = data_frame['cultura'].tolist()
-    arquivo_l = data_frame['path'].tolist()
-    plantio_l = data_frame['data'].tolist()
-    imagem_l = data_frame['ref_infra_v'].tolist()
-
-    imagens_baixadas_df = data_frame['imagens_baixadas'].tolist()
-    imagens_processadas_df = data_frame['imagens_processadas'].tolist()
-
-    areas_li = [0 for i in range(len(lista_path))]
-    imagens_baixadas_li = [0 for i in range(len(lista_path))]
-    imagens_processadas_li = [0 for i in range(len(lista_path))]
-
     try:
-        count_requests = 0
-        for i in range(len(lista_path)):
-            cultura = cultura_l[i]
-            arquivo = arquivo_l[i]
-            plantio = plantio_l[i]
-            imagem = imagem_l[i]
+        for _, row in data_frame.iterrows():
+            ref_infra_v = row['ref_infra_v']
+            cultura = row['cultura']
 
-            if len(imagens_baixadas_df[i]) > 2:
-                logging.info(f"skipping loop {i}...")
-                imagens_baixadas_li[i] = imagens_baixadas_df[i]
-                imagens_processadas_li[i] = imagens_processadas_df[i]
+            if str(cultura).strip().lower() not in CULTURAS_PERMITIDAS:
                 continue
 
-            logging.info(f"processando loop {i} -> {arquivo}")
+            if ja_processado(ref_infra_v):
+                logging.info(f"skipping {ref_infra_v}...")
+                continue
+
+            arquivo = row['path']
+            plantio_base = datetime.strptime(str(row['data']), "%Y-%m-%d")
+
+            logging.info(f"processando {ref_infra_v} -> {arquivo}")
             area = calcular_area2(arquivo)
-            areas_li[i] = area
-            plantio = datetime.strptime(plantio, "%Y-%m-%d")
 
             imagens_baixadas = []
             imagens_processadas = []
 
-            datas_cultura = lista_datas_cultura(cultura)
-
-            for j in range(len(datas_cultura)):
-                # Primeiro: Para cada kml baixar a imagem e renomear com a ref
-                imagem_mask = imagem +'_d'+ str(datas_cultura[j])
-                plantio = plantio + timedelta(days=datas_cultura[j])
+            for dap in lista_datas_cultura(cultura):
+                imagem_mask = ref_infra_v + '_d' + str(dap)
+                data_dap = plantio_base + timedelta(days=dap)
 
                 try:
-                    nome, val2, val3 = request_sentinel_hub(plantio, arquivo, imagem_mask)
+                    nome, _, _ = request_sentinel_hub(data_dap, arquivo, imagem_mask, pasta_imagens=PASTA_IMAGENS)
 
                     mask = f"./mascaras/mascara_{imagem_mask}.png"
-                    path = f"./imagens/{imagem_mask}/{nome[0]}/response.png"
+                    path = f"{PASTA_IMAGENS}/{imagem_mask}/{nome[0]}/response.png"
                     processada = f"./processadas/mascara_{imagem_mask}.png"
                     aplica_mascara(mask, path, processada, arquivo)
 
                     imagens_baixadas.append(path)
                     imagens_processadas.append(processada)
                 except FileNotFoundError:
+                    logging.warning(f"Arquivo não encontrado: {imagem_mask}, DAP {dap}")
                     continue
                 except Exception as ex:
-                    raise ex
+                    logging.error(f"Erro no DAP {dap} para {ref_infra_v}: {ex}")
+                    continue
 
-            imagens_baixadas_li[i] = imagens_baixadas
-            imagens_processadas_li[i] = imagens_processadas
+            inserir_registro(row, area, imagens_baixadas, imagens_processadas)
+            logging.info(f"Salvo no DB: {ref_infra_v}")
+
     except Exception as ex:
-        print(ex)
-
-    finally:
-        data_frame["area"] = areas_li
-        data_frame['imagens_baixadas'] = imagens_baixadas_li
-        data_frame['imagens_processadas'] = imagens_processadas_li
-        data_frame.to_csv('dataframe_processado_final.csv')
+        logging.error(f"Erro inesperado: {ex}")
+        logging.info("Finalizado.")
 
 
 def request_mlserver(ref_infra: str, caminho_imagem: str):
@@ -207,5 +248,5 @@ def executar_request():
 
 
 if __name__ == '__main__':
-    executar_request()
+    baixar_imagens()
 

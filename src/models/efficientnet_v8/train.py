@@ -1,28 +1,28 @@
 """
-Classificador de culturas v7 - EfficientNetB0 + FiLM(dia, mes) + Temporal Attention.
-Portado de TensorFlow para PyTorch para suporte nativo a CUDA no Windows.
+Classificador de culturas v8 - EfficientNetB0 + FiLM(dia, mes) + Temporal Attention
+                              + HEAD HIERARQUICA.
 
-Arquitetura:
-    Para cada talhao com ate MAX_SEQ_LEN imagens temporais:
-    1. EfficientNetB0 (timm, pretrained) extrai features 1280-dim por imagem
-    2. FiLM conditioning: concat(dia_normalizado, mes_embedding_8d) -> Dense(64)
-       -> gamma, beta que modulam as features: x * (1+gamma) + beta
-    3. 2 camadas de MultiHeadAttention cruzam info entre timesteps
-    4. Mean-pooling dos tokens validos -> Dense(256) -> classificacao
-
-    O mes e tratado como CATEGORICO via Embedding(12, 8).
-    gamma/beta sao zero-initialized -> comeca como identidade.
+Diferenca para v7:
+    A confusao na avaliacao de FocusNet/v7 mostrou dois clusters bem definidos:
+        - Cereais de inverno: {aveia, trigo}    -> separaveis com facilidade
+        - Graos de verao   : {feijao, milho, soja} -> confusos entre si
+    Em vez de uma unica cabeca de 5 classes, v8 usa tres cabecas:
+        head_group  : 2-way   {cereal, grao}                (decisao "facil")
+        head_cereal : 2-way   {aveia, trigo}                (so faz sentido p/ cereais)
+        head_grao   : 3-way   {feijao, milho, soja}         (decisao "dificil")
+    Loss = loss(group) + loss(cereal | sample e cereal) + loss(grao | sample e grao).
+    Inferencia: combina via probabilidade conjunta:
+        P(classe) = P(grupo da classe) * P(classe | grupo)
 
 Otimizacoes GPU:
     - AMP (mixed precision FP16)
-    - torch.compile
     - cudnn.benchmark
     - non_blocking transfers
     - persistent DataLoader workers
-    - Data augmentation via torchvision transforms
+    - WeightedRandomSampler + augmentation geometrica
 
 Uso:
-    python src/models/efficientnet_v7/train.py
+    python src/models/efficientnet_v8/train.py
 """
 
 import json
@@ -56,7 +56,6 @@ from sklearn.metrics import (
 
 # -- Paths relativos ao arquivo ------------------------------------------------
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# Note: _HERE = src/model/efficientnet
 SRC_DIR = os.path.normpath(os.path.join(_HERE, '..', '..'))  # -> src/
 ROOT_DIR = os.path.normpath(os.path.join(SRC_DIR, '..'))      # -> root/
 
@@ -64,7 +63,7 @@ ROOT_DIR = os.path.normpath(os.path.join(SRC_DIR, '..'))      # -> root/
 LOG_DIR = os.path.join(_HERE, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 log_filename = os.path.join(
-    LOG_DIR, f'treino_efficientnet_v7_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.txt'
+    LOG_DIR, f'treino_efficientnet_v8_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.txt'
 )
 logging.basicConfig(
     level=logging.INFO,
@@ -79,27 +78,48 @@ logging.basicConfig(
 DB_PATH          = os.path.join(SRC_DIR, 'dados_v2.db')
 TABELA           = 'culturas'
 IMG_SIZE         = (224, 224)
-BATCH_SIZE       = 64            # aumentado para GPU
+BATCH_SIZE       = 64
 EPOCHS_FASE1     = 10
 EPOCHS_FASE2     = 15
-LR_FASE1         = 1e-3
+LR_FASE1         = 5e-4
 LR_FASE2         = 1e-5
 GRAD_CLIP        = 1.0
 LABEL_SMOOTHING  = 0.1
 MODELO_SAIDA     = os.path.join(_HERE, 'artifacts')
 
-# Consideramos as 5 principais (feijao sem acento será mapeado para feijão)
-CLASSES          = ['soja', 'milho', 'trigo', 'aveia', 'feijão']
+# Ordem das 5 classes (mantida igual a v7 para compatibilidade de checkpoints/logs).
+CLASSES = ['soja', 'milho', 'trigo', 'aveia', 'feijão']
+
+# Hierarquia
+# Grupo: 0=cereal, 1=grao
+# Mapeamentos por idx em CLASSES:
+#   soja(0)=grao, milho(1)=grao, trigo(2)=cereal, aveia(3)=cereal, feijao(4)=grao
+GROUP_OF_CLASS    = [1, 1, 0, 0, 1]
+# Idx dentro do head_cereal (aveia=0, trigo=1). -1 = nao se aplica.
+CEREAL_IDX_OF_CLS = [-1, -1, 1, 0, -1]
+# Idx dentro do head_grao (feijao=0, milho=1, soja=2). -1 = nao se aplica.
+GRAO_IDX_OF_CLS   = [2, 1, -1, -1, 0]
+NUM_CEREAL = 2
+NUM_GRAO   = 3
 
 SEED             = 42
 MAX_SEQ_LEN      = 3
 MAX_DIA          = 100.0
-MES_EMBED_DIM    = 8              # dimensao do embedding de mes
-FINE_TUNE_LAYERS = 20             # camadas do backbone a descongelar
+MES_EMBED_DIM    = 8
+FINE_TUNE_LAYERS = 20
 NUM_WORKERS      = 4
 
 DEVICE  = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 USE_AMP = DEVICE.type == 'cuda'
+
+# BF16 (Ampere+) tem o mesmo range de FP32 -> elimina overflow no Swish do EfficientNet.
+# Em GPUs anteriores, cai de volta para FP16 + GradScaler.
+if USE_AMP and torch.cuda.is_bf16_supported():
+    AMP_DTYPE = torch.bfloat16
+    USE_FP16  = False
+else:
+    AMP_DTYPE = torch.float16
+    USE_FP16  = USE_AMP
 
 if DEVICE.type == 'cuda':
     torch.backends.cudnn.benchmark = True
@@ -116,13 +136,9 @@ def extrair_dia(caminho: str) -> int:
 
 
 def carregar_dados(db_path: str) -> tuple[list[list[tuple[str, int]]], list[int], list[int]]:
-    """
-    Retorna (registros, labels, meses).
-    Cada registro e uma lista de (caminho, dia) ORDENADOS por dia.
-    """
     classe_para_id = {c: i for i, c in enumerate(CLASSES)}
-    classe_para_id['feijao'] = classe_para_id['feijão'] # Fallback
-    
+    classe_para_id['feijao'] = classe_para_id['feijão']
+
     registros = []
     labels = []
     meses = []
@@ -157,24 +173,18 @@ def carregar_dados(db_path: str) -> tuple[list[list[tuple[str, int]]], list[int]
 
 def preprocessar_imagem(caminho: str) -> np.ndarray:
     img = cv2.imread(caminho)
-    # se cv2.imread falhar em algo e img for none, tratar
     if img is None:
         return np.zeros((3, IMG_SIZE[0], IMG_SIZE[1]), dtype=np.float32)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, IMG_SIZE)
     img = img.astype(np.float32) / 255.0
     img = (img - MEAN) / STD
-    return np.transpose(img, (2, 0, 1))  # HWC -> CHW
+    return np.transpose(img, (2, 0, 1))
 
 
 # -- Dataset -------------------------------------------------------------------
 
 class TemporalCulturaDataset(Dataset):
-    """
-    Cada sample: (images[T,C,H,W], dias[T], mes, mask[T], label)
-    Sequencias menores que MAX_SEQ_LEN sao padded com zeros + mask=0.
-    """
-
     def __init__(self, registros, labels, meses, augment: bool = False):
         self.registros = registros
         self.labels = labels
@@ -194,7 +204,6 @@ class TemporalCulturaDataset(Dataset):
         dias = np.zeros(MAX_SEQ_LEN, dtype=np.float32)
         mask = np.zeros(MAX_SEQ_LEN, dtype=np.float32)
 
-        # Augmentation params chosen once per sequence so all timesteps stay aligned
         if self.augment:
             flip_h = np.random.rand() < 0.5
             flip_v = np.random.rand() < 0.5
@@ -219,7 +228,7 @@ class TemporalCulturaDataset(Dataset):
         return (
             torch.tensor(images, dtype=torch.float32),
             torch.tensor(dias, dtype=torch.float32),
-            torch.tensor(mes - 1, dtype=torch.long),   # 0-indexed para Embedding
+            torch.tensor(mes - 1, dtype=torch.long),
             torch.tensor(mask, dtype=torch.float32),
             torch.tensor(label, dtype=torch.long),
         )
@@ -227,34 +236,27 @@ class TemporalCulturaDataset(Dataset):
 
 # -- Modelo --------------------------------------------------------------------
 
-class EfficientNetTemporalV6(nn.Module):
+class EfficientNetTemporalV8(nn.Module):
     """
-    EfficientNetB0 + FiLM(dia, mes_embedding) + 2x MultiHeadAttention temporal.
-
-    Arquitetura:
-        images[B,T,C,H,W] -> EfficientNetB0 -> features[B,T,D]
-        FiLM: concat(dia, mes_emb) -> Dense(64) -> gamma,beta -> modula features
-        2x Self-Attention sobre os T tokens temporais (com mask)
-        Mean pooling -> Dense(256) -> ReLU -> Dropout -> Dense(num_classes)
+    EfficientNetB0 + FiLM(dia, mes_embedding) + 2x MultiHeadAttention temporal
+    + cabecas hierarquicas:
+        head_group  (2 logits): cereal vs grao
+        head_cereal (2 logits): aveia vs trigo
+        head_grao   (3 logits): feijao vs milho vs soja
     """
 
-    def __init__(self, num_classes: int):
+    def __init__(self):
         super().__init__()
 
-        # EfficientNetB0 backbone (timm, pretrained ImageNet)
         self.backbone = timm.create_model('efficientnet_b0', pretrained=True, num_classes=0)
         self.feature_dim = self.backbone.num_features  # 1280
 
-        # Congelar backbone inicialmente
         for param in self.backbone.parameters():
             param.requires_grad = False
 
-        # Mes -> embedding categorico aprendido
         self.mes_embedding = nn.Embedding(12, MES_EMBED_DIM)
 
-        # FiLM: concat(dia[1], mes_emb[8]) = 9-dim -> 64 -> gamma/beta[1280]
         self.film_hidden = nn.Linear(1 + MES_EMBED_DIM, 64)
-        # Zero-init: gamma=0, beta=0 -> modulacao comeca como identidade
         self.film_gamma = nn.Linear(64, self.feature_dim)
         self.film_beta = nn.Linear(64, self.feature_dim)
         nn.init.zeros_(self.film_gamma.weight)
@@ -262,7 +264,6 @@ class EfficientNetTemporalV6(nn.Module):
         nn.init.zeros_(self.film_beta.weight)
         nn.init.zeros_(self.film_beta.bias)
 
-        # 2 camadas de self-attention temporal
         self.attn1 = nn.MultiheadAttention(
             embed_dim=self.feature_dim, num_heads=8, dropout=0.1, batch_first=True,
         )
@@ -272,66 +273,116 @@ class EfficientNetTemporalV6(nn.Module):
         )
         self.norm2 = nn.LayerNorm(self.feature_dim)
 
-        # Cabeca de classificacao
-        self.head = nn.Sequential(
-            nn.Linear(self.feature_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes),
-        )
+        # Cabecas hierarquicas (3). Cada uma com seu MLP independente para nao
+        # forcar compartilhar capacidade entre tarefas com fronteiras distintas.
+        def _mlp(out_dim: int) -> nn.Sequential:
+            return nn.Sequential(
+                nn.Linear(self.feature_dim, 256),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(256, out_dim),
+            )
 
-    def forward(self, images, dias, mes, mask):
-        """
-        images: (B, T, C, H, W)
-        dias:   (B, T)     - normalizado [0,1]
-        mes:    (B,)       - int 0-11
-        mask:   (B, T)     - 1.0 para timesteps validos, 0.0 para padding
-        """
+        self.head_group  = _mlp(2)
+        self.head_cereal = _mlp(NUM_CEREAL)
+        self.head_grao   = _mlp(NUM_GRAO)
+
+    def encode(self, images, dias, mes, mask):
+        """Pipeline backbone+FiLM+attention -> features pooled (B, feature_dim)."""
         B, T = images.shape[0], images.shape[1]
 
-        # -- EfficientNet features por timestep ----------------------------
-        imgs_flat = images.reshape(B * T, *images.shape[2:])   # (B*T, C, H, W)
-        feats_flat = self.backbone(imgs_flat)                   # (B*T, 1280)
-        features = feats_flat.reshape(B, T, -1)                 # (B, T, 1280)
+        imgs_flat = images.reshape(B * T, *images.shape[2:])
+        feats_flat = self.backbone(imgs_flat)
+        features = feats_flat.reshape(B, T, -1)
 
-        # -- FiLM: (dia, mes_embedding) -> gamma, beta --------------------
-        mes_emb = self.mes_embedding(mes)               # (B, MES_EMBED_DIM)
-        mes_emb = mes_emb.unsqueeze(1).expand(-1, T, -1)  # (B, T, MES_EMBED_DIM)
-        dia_exp = dias.unsqueeze(-1)                    # (B, T, 1)
-        context = torch.cat([dia_exp, mes_emb], dim=-1)  # (B, T, 9)
+        mes_emb = self.mes_embedding(mes)
+        mes_emb = mes_emb.unsqueeze(1).expand(-1, T, -1)
+        dia_exp = dias.unsqueeze(-1)
+        context = torch.cat([dia_exp, mes_emb], dim=-1)
 
-        film_h = F.relu(self.film_hidden(context))      # (B, T, 64)
-        gamma = self.film_gamma(film_h)                  # (B, T, 1280)
-        beta = self.film_beta(film_h)                    # (B, T, 1280)
-
+        film_h = F.relu(self.film_hidden(context))
+        gamma = self.film_gamma(film_h)
+        beta = self.film_beta(film_h)
         tokens = features * (1.0 + gamma) + beta
 
-        # -- Temporal self-attention (2 camadas) ---------------------------
-        # key_padding_mask: True = ignored (inverted from our mask)
-        key_pad_mask = (mask == 0)   # (B, T), True onde e padding
-
+        key_pad_mask = (mask == 0)
         attn_out1, _ = self.attn1(tokens, tokens, tokens, key_padding_mask=key_pad_mask)
         tokens = self.norm1(tokens + attn_out1)
-
         attn_out2, _ = self.attn2(tokens, tokens, tokens, key_padding_mask=key_pad_mask)
         tokens = self.norm2(tokens + attn_out2)
 
-        # -- Mean pooling dos tokens validos -------------------------------
-        mask_exp = mask.unsqueeze(-1)  # (B, T, 1)
+        mask_exp = mask.unsqueeze(-1)
         pooled = (tokens * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1.0)
+        return pooled
 
-        return self.head(pooled)
+    def forward(self, images, dias, mes, mask):
+        pooled = self.encode(images, dias, mes, mask)
+        return (
+            self.head_group(pooled),    # (B, 2)
+            self.head_cereal(pooled),   # (B, 2)
+            self.head_grao(pooled),     # (B, 3)
+        )
 
     def descongelar_ultimas_camadas(self, n_camadas: int):
-        """Descongela as ultimas n_camadas do backbone para fine-tuning."""
-        # Primeiro congela tudo
         for param in self.backbone.parameters():
             param.requires_grad = False
-
-        # Depois descongela as ultimas n camadas
         all_layers = list(self.backbone.named_parameters())
-        for name, param in all_layers[-n_camadas:]:
+        for _, param in all_layers[-n_camadas:]:
             param.requires_grad = True
+
+
+# -- Hierarquia: utilitarios ---------------------------------------------------
+
+def _make_hierarchy_tensors(device):
+    group_of    = torch.tensor(GROUP_OF_CLASS,    dtype=torch.long, device=device)
+    cereal_idx  = torch.tensor(CEREAL_IDX_OF_CLS, dtype=torch.long, device=device)
+    grao_idx    = torch.tensor(GRAO_IDX_OF_CLS,   dtype=torch.long, device=device)
+    return group_of, cereal_idx, grao_idx
+
+
+def combinar_5way_logprobs(group_l, cereal_l, grao_l):
+    """
+    Combina os 3 heads em log-probabilidades 5-way usando probabilidade conjunta:
+        P(c) = P(grupo de c) * P(c | grupo)
+    Ordem das 5 saidas: ['soja','milho','trigo','aveia','feijão'].
+    """
+    log_g = F.log_softmax(group_l,  dim=-1)  # [:,0]=cereal, [:,1]=grao
+    log_c = F.log_softmax(cereal_l, dim=-1)  # [:,0]=aveia,  [:,1]=trigo
+    log_r = F.log_softmax(grao_l,   dim=-1)  # [:,0]=feijão, [:,1]=milho, [:,2]=soja
+
+    out = torch.empty(group_l.shape[0], 5, device=group_l.device, dtype=log_g.dtype)
+    out[:, 0] = log_g[:, 1] + log_r[:, 2]   # soja
+    out[:, 1] = log_g[:, 1] + log_r[:, 1]   # milho
+    out[:, 2] = log_g[:, 0] + log_c[:, 1]   # trigo
+    out[:, 3] = log_g[:, 0] + log_c[:, 0]   # aveia
+    out[:, 4] = log_g[:, 1] + log_r[:, 0]   # feijão
+    return out
+
+
+def calcular_loss_hierarquica(group_l, cereal_l, grao_l, labels, criterion,
+                              group_of, cereal_idx, grao_idx):
+    """
+    loss = loss_group + loss_cereal (so amostras cereais) + loss_grao (so amostras graos).
+    """
+    group_lab = group_of[labels]   # (B,)
+    loss_g = criterion(group_l, group_lab).mean()
+
+    is_cereal = group_lab == 0
+    is_grao   = group_lab == 1
+
+    if is_cereal.any():
+        cereal_lab = cereal_idx[labels[is_cereal]]
+        loss_c = criterion(cereal_l[is_cereal], cereal_lab).mean()
+    else:
+        loss_c = torch.zeros((), device=group_l.device)
+
+    if is_grao.any():
+        grao_lab = grao_idx[labels[is_grao]]
+        loss_r = criterion(grao_l[is_grao], grao_lab).mean()
+    else:
+        loss_r = torch.zeros((), device=group_l.device)
+
+    return loss_g + loss_c + loss_r, (loss_g.detach(), loss_c.detach(), loss_r.detach())
 
 
 # -- Treino --------------------------------------------------------------------
@@ -339,6 +390,7 @@ class EfficientNetTemporalV6(nn.Module):
 def treinar_fase(
     modelo, loader_treino, loader_val, optimizer, criterion,
     epochs, fase_nome, patience,
+    group_of, cereal_idx, grao_idx,
     scaler=None,
 ):
     best_val_loss = float('inf')
@@ -348,6 +400,9 @@ def treinar_fase(
     for epoch in range(epochs):
         modelo.train()
         total_loss = corretos = total = 0
+        sum_lg = sum_lc = sum_lr = 0.0
+        nan_streak = 0
+        nan_total = 0
 
         for images, dias, mes, mask, labels in loader_treino:
             images = images.to(DEVICE, non_blocking=True)
@@ -358,9 +413,30 @@ def treinar_fase(
 
             optimizer.zero_grad(set_to_none=True)
 
-            with autocast(device_type=DEVICE.type, enabled=USE_AMP):
-                logits = modelo(images, dias, mes, mask)
-                loss = criterion(logits, labels).mean()
+            with autocast(device_type=DEVICE.type, dtype=AMP_DTYPE, enabled=USE_AMP):
+                group_l, cereal_l, grao_l = modelo(images, dias, mes, mask)
+                loss, (lg, lc, lr) = calcular_loss_hierarquica(
+                    group_l, cereal_l, grao_l, labels, criterion,
+                    group_of, cereal_idx, grao_idx,
+                )
+
+            # Guarda contra NaN/Inf (overflow FP16 no Swish do EfficientNet):
+            # se o loss nao for finito, NAO chamamos backward — os pesos ficam intactos.
+            if not torch.isfinite(loss):
+                nan_streak += 1
+                nan_total += 1
+                logging.warning(
+                    f"[{fase_nome}] Loss nao-finito (g={lg.item()} c={lc.item()} r={lr.item()}) "
+                    f"- batch ignorado ({nan_streak} consecutivos, {nan_total} no epoch)"
+                )
+                if nan_streak >= 20:
+                    logging.error(
+                        f"[{fase_nome}] 20 batches NaN consecutivos — possivel corrupcao "
+                        "dos pesos. Abortando epoch."
+                    )
+                    break
+                continue
+            nan_streak = 0
 
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -379,9 +455,16 @@ def treinar_fase(
                 )
                 optimizer.step()
 
-            total_loss += loss.item() * images.size(0)
-            corretos += (logits.argmax(1) == labels).sum().item()
-            total += images.size(0)
+            with torch.no_grad():
+                logits5 = combinar_5way_logprobs(group_l, cereal_l, grao_l)
+                corretos += (logits5.argmax(1) == labels).sum().item()
+
+            bs = images.size(0)
+            total_loss += loss.item() * bs
+            sum_lg += lg.item() * bs
+            sum_lc += lc.item() * bs
+            sum_lr += lr.item() * bs
+            total += bs
 
         train_loss = total_loss / total
         train_acc = corretos / total
@@ -389,7 +472,7 @@ def treinar_fase(
         # Validacao
         modelo.eval()
         vl_loss = vl_corr = vl_tot = 0
-        with torch.no_grad(), autocast(device_type=DEVICE.type, enabled=USE_AMP):
+        with torch.no_grad(), autocast(device_type=DEVICE.type, dtype=AMP_DTYPE, enabled=USE_AMP):
             for images, dias, mes, mask, labels in loader_val:
                 images = images.to(DEVICE, non_blocking=True)
                 dias   = dias.to(DEVICE, non_blocking=True)
@@ -397,9 +480,14 @@ def treinar_fase(
                 mask   = mask.to(DEVICE, non_blocking=True)
                 labels = labels.to(DEVICE, non_blocking=True)
 
-                logits = modelo(images, dias, mes, mask)
-                vl_loss += criterion(logits, labels).mean().item() * images.size(0)
-                vl_corr += (logits.argmax(1) == labels).sum().item()
+                group_l, cereal_l, grao_l = modelo(images, dias, mes, mask)
+                loss, _ = calcular_loss_hierarquica(
+                    group_l, cereal_l, grao_l, labels, criterion,
+                    group_of, cereal_idx, grao_idx,
+                )
+                logits5 = combinar_5way_logprobs(group_l, cereal_l, grao_l)
+                vl_loss += loss.item() * images.size(0)
+                vl_corr += (logits5.argmax(1) == labels).sum().item()
                 vl_tot += images.size(0)
 
         val_loss = vl_loss / vl_tot
@@ -407,7 +495,8 @@ def treinar_fase(
 
         logging.info(
             f"[{fase_nome}] Epoch {epoch+1}/{epochs} - "
-            f"train_loss: {train_loss:.4f} | train_acc: {train_acc:.4f} | "
+            f"train_loss: {train_loss:.4f} (g={sum_lg/total:.3f} c={sum_lc/total:.3f} r={sum_lr/total:.3f}) | "
+            f"train_acc: {train_acc:.4f} | "
             f"val_loss: {val_loss:.4f} | val_acc: {val_acc:.4f}"
         )
 
@@ -441,9 +530,12 @@ def main() -> None:
     np.random.seed(SEED)
 
     logging.info(
-        "=== V7: EfficientNetB0 + FiLM(dia, mes_embedding) + Temporal Attention (PyTorch) ==="
+        "=== V8: EfficientNetB0 + FiLM(dia, mes_embedding) + Temporal Attention + HEAD HIERARQUICA ==="
     )
-    logging.info(f"Dispositivo: {DEVICE} | AMP: {USE_AMP} | cuDNN benchmark: {torch.backends.cudnn.benchmark}")
+    logging.info(
+        f"Dispositivo: {DEVICE} | AMP: {USE_AMP} | dtype: {AMP_DTYPE} | "
+        f"GradScaler: {USE_FP16} | cuDNN benchmark: {torch.backends.cudnn.benchmark}"
+    )
 
     # 1. Carregar dados
     logging.info(f"Carregando dados de: {db_path_atual}")
@@ -466,13 +558,13 @@ def main() -> None:
     for m in sorted(mes_dist):
         logging.info(f"  mes {m:>2}: {mes_dist[m]} talhoes")
 
-    # 2. Split por talhao
+    # 2. Split
     reg_treino, reg_val, lab_treino, lab_val, mes_treino, mes_val = train_test_split(
         registros, labels, meses, test_size=0.2, stratify=labels, random_state=SEED
     )
     logging.info(f"Treino: {len(reg_treino)} talhoes | Validacao: {len(reg_val)} talhoes")
 
-    # 3. DataLoaders + WeightedRandomSampler para batches balanceados por classe
+    # 3. DataLoaders + WeightedRandomSampler
     ds_tr  = TemporalCulturaDataset(reg_treino, lab_treino, mes_treino, augment=True)
     ds_val = TemporalCulturaDataset(reg_val, lab_val, mes_val, augment=False)
     use_pin = DEVICE.type == 'cuda'
@@ -486,9 +578,9 @@ def main() -> None:
         replacement=True,
     )
     logging.info(f"Counts treino por classe: {dict(zip(CLASSES, class_counts.tolist()))}")
-    logging.info("Usando WeightedRandomSampler (batches balanceados) + augmentation geometrica")
+    logging.info("Usando WeightedRandomSampler (batches balanceados por classe) + augmentation geometrica")
 
-    def _worker_init(_worker_id):
+    def _worker_init(_):
         cv2.setNumThreads(0)
         try:
             cv2.ocl.setUseOpenCL(False)
@@ -505,27 +597,32 @@ def main() -> None:
                             worker_init_fn=_worker_init)
     logging.info(f"Treino batches: {len(loader_tr)} | Val batches: {len(loader_val)}")
 
+    # 4. Hierarquia
+    group_of, cereal_idx, grao_idx = _make_hierarchy_tensors(DEVICE)
+
     # 5. Modelo
-    logging.info("Criando EfficientNetB0 V7 + FiLM(dia,mes) + Temporal Attention (PyTorch)...")
-    modelo = EfficientNetTemporalV6(len(CLASSES)).to(DEVICE)
+    logging.info("Criando EfficientNetB0 V8 + FiLM(dia,mes) + Temporal Attention + Head Hierarquica...")
+    modelo = EfficientNetTemporalV8().to(DEVICE)
 
     total_p = sum(p.numel() for p in modelo.parameters())
     train_p = sum(p.numel() for p in modelo.parameters() if p.requires_grad)
     logging.info(f"Params: {total_p:,} total | {train_p:,} treinaveis")
 
-    scaler = GradScaler(device=DEVICE.type) if USE_AMP else None
+    scaler = GradScaler(device=DEVICE.type) if USE_FP16 else None
     criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=LABEL_SMOOTHING)
 
-    # -- Fase 1: Base congelada ------------------------------------------------
-    logging.info("=== Fase 1: Treinando cabeca + FiLM + temporal attention (base congelada) ===")
+    # -- Fase 1
+    logging.info("=== Fase 1: Treinando heads + FiLM + temporal attention (base congelada) ===")
     train_start_time = time.perf_counter()
     opt = torch.optim.Adam(
         (p for p in modelo.parameters() if p.requires_grad), lr=LR_FASE1,
     )
     treinar_fase(modelo, loader_tr, loader_val, opt, criterion,
-                 EPOCHS_FASE1, "Fase1", patience=3, scaler=scaler)
+                 EPOCHS_FASE1, "Fase1", patience=3,
+                 group_of=group_of, cereal_idx=cereal_idx, grao_idx=grao_idx,
+                 scaler=scaler)
 
-    # -- Fase 2: Fine-tuning ---------------------------------------------------
+    # -- Fase 2
     logging.info(f"=== Fase 2: Fine-tuning (ultimas {FINE_TUNE_LAYERS} camadas) ===")
     modelo.descongelar_ultimas_camadas(FINE_TUNE_LAYERS)
     train_p = sum(p.numel() for p in modelo.parameters() if p.requires_grad)
@@ -535,32 +632,37 @@ def main() -> None:
         (p for p in modelo.parameters() if p.requires_grad), lr=LR_FASE2,
     )
     treinar_fase(modelo, loader_tr, loader_val, opt, criterion,
-                 EPOCHS_FASE2, "Fase2", patience=4, scaler=scaler)
+                 EPOCHS_FASE2, "Fase2", patience=4,
+                 group_of=group_of, cereal_idx=cereal_idx, grao_idx=grao_idx,
+                 scaler=scaler)
 
     train_total_time = time.perf_counter() - train_start_time
     logging.info(f"Tempo total de treinamento: {train_total_time:.2f} segundos")
 
-    # -- Salvar ----------------------------------------------------------------
+    # -- Salvar
     os.makedirs(modelo_saida_atual, exist_ok=True)
     peso_path = os.path.join(modelo_saida_atual, 'pesos.pt')
     torch.save(modelo.state_dict(), peso_path)
     logging.info(f"Pesos salvos em: {peso_path}")
 
-    # -- Avaliacao final -------------------------------------------------------
+    # -- Avaliacao final
     modelo.eval()
     y_true, y_pred = [], []
+    y_pred_group_only = []   # rotulo previsto so pelo head_group, p/ medir o gargalo
     n_samples = 0
     t_start = time.perf_counter()
 
-    with torch.no_grad(), autocast(device_type=DEVICE.type, enabled=USE_AMP):
+    with torch.no_grad(), autocast(device_type=DEVICE.type, dtype=AMP_DTYPE, enabled=USE_AMP):
         for images, dias, mes, mask, labels in loader_val:
             images = images.to(DEVICE, non_blocking=True)
             dias   = dias.to(DEVICE, non_blocking=True)
             mes    = mes.to(DEVICE, non_blocking=True)
             mask   = mask.to(DEVICE, non_blocking=True)
 
-            logits = modelo(images, dias, mes, mask)
-            y_pred.extend(logits.argmax(1).cpu().numpy())
+            group_l, cereal_l, grao_l = modelo(images, dias, mes, mask)
+            logits5 = combinar_5way_logprobs(group_l, cereal_l, grao_l)
+            y_pred.extend(logits5.argmax(1).cpu().numpy())
+            y_pred_group_only.extend(group_l.argmax(1).cpu().numpy())
             y_true.extend(labels.numpy())
             n_samples += labels.size(0)
 
@@ -570,7 +672,12 @@ def main() -> None:
     f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
     f1_per_class = f1_score(y_true, y_pred, average=None, zero_division=0)
 
-    logging.info(f"Validacao final - Acc: {acc:.4f} | F1-macro: {f1_macro:.4f}")
+    # Acuracia do head de grupo (cereal vs grao) isolado
+    y_true_group = [GROUP_OF_CLASS[t] for t in y_true]
+    acc_group = accuracy_score(y_true_group, y_pred_group_only)
+
+    logging.info(f"Validacao final - Acc 5-way: {acc:.4f} | F1-macro: {f1_macro:.4f}")
+    logging.info(f"Acuracia do head_group (cereal vs grao): {acc_group:.4f}")
     for cls_name, f1_cls in zip(CLASSES, f1_per_class):
         logging.info(f"  F1 {cls_name}: {f1_cls:.4f}")
 
@@ -588,7 +695,7 @@ def main() -> None:
     tempo_medio = (t_total / n_samples) * 1000
     logging.info(f"Tempo medio de inferencia: {tempo_medio:.2f} ms/talhao ({n_samples} talhoes)")
 
-    # -- Salvar metricas -------------------------------------------------------
+    # -- Salvar metricas
     try:
         os.makedirs(modelo_saida_atual, exist_ok=True)
         metrics_path = os.path.join(
@@ -597,6 +704,7 @@ def main() -> None:
         metrics_dict = {
             "f1_macro": float(f1_macro),
             "accuracy": float(acc),
+            "accuracy_group_head": float(acc_group),
             "f1_per_class": {c: float(f) for c, f in zip(CLASSES, f1_per_class)},
             "tempo_medio_ms": float(tempo_medio),
             "tempo_treino_segundos": float(train_total_time),

@@ -29,6 +29,8 @@ from sentinelhub import WcsRequest, MimeType
 import xml.etree.ElementTree as ET
 from utils import analisar_cobertura_de_nuvens
 
+MAX_CLOUD_COVERAGE = 0.60
+
 
 config = SHConfig()
 #config.sh_client_id = '66d895ef-6894-4c21-8a7c-0e0ec2c41537'
@@ -42,7 +44,7 @@ config.instance_id = 'b3969a49-37a6-41e1-982f-0c8a15c8a00f'
 config.save('main_test')
 
 
-def request_sentinel_hub(data, caminho_kml: str, r_imagem: str, sentinel_layer = 'BANDAS_RBN', png = True ) -> str:
+def request_sentinel_hub(data, caminho_kml: str, r_imagem: str, sentinel_layer = 'BANDAS_RBN', png = True, pasta_imagens = './imagens') -> str:
     if png:
         mime = MimeType.PNG
         extensao = '.png'
@@ -52,7 +54,7 @@ def request_sentinel_hub(data, caminho_kml: str, r_imagem: str, sentinel_layer =
 
     # TRUE-COLOR-DEM, TRUE-COLOR-S2-L2A
 
-    ref_imagem = './imagens/' + r_imagem
+    ref_imagem = pasta_imagens + '/' + r_imagem
 
     data_final = data
     data_inicial = data - timedelta(days=5)
@@ -85,6 +87,7 @@ def request_sentinel_hub(data, caminho_kml: str, r_imagem: str, sentinel_layer =
         resx='10m',  # Resolução em x
         resy='10m',  # Resolução em y
         image_format=mime,
+        maxcc=MAX_CLOUD_COVERAGE,  # filtro server-side por cobertura do tile
         config=config,
         data_folder= ref_imagem  # Caminho para salvar os dados
     )

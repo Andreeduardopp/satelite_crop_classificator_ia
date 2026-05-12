@@ -1,0 +1,6 @@
+kml,data,true,pred,confianca,prob_true,acerto,tempo_seg
+MILHO_517317630-1_plantio_28-01-24_colheita_16-05-24.kml,2024-01-28,MILHO,FEIJÃO,66.5,21.8,False,36.6
+AVEIA_519753287-1_plantio_01-06-25_colheita_20-10-25.kml,2025-06-01,AVEIA,AVEIA,91.7,91.7,True,36.6
+TRIGO_517748016-1_plantio_08-06-24_colheita_15-10-24.kml,2024-06-08,TRIGO,TRIGO,93.1,93.1,True,36.6
+SOJA_520293796-1_plantio_01-10-25_colheita_05-03-26.kml,2025-10-01,SOJA,SOJA,70.2,70.2,True,36.6
+FEIJÃO_517400846-1_plantio_01-02-24_colheita_20-04-24.kml,2024-02-01,FEIJÃO,FEIJÃO,90.9,90.9,True,36.6

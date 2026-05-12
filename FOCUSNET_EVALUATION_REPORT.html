@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Arquitetura dos Modelos de Classifica&ccedil;&atilde;o de Culturas</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css">
+<link href="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.css" rel="stylesheet" type="text/css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="arquitetura-dos-modelos-de-classificação-de-culturas">Arquitetura dos Modelos de Classificação de Culturas</h1>
+<h2 id="sumário">Sumário</h2>
+<p>Este documento avalia o serviço atual de classificação de culturas (<strong>FocusNet</strong>) e propõe uma nova arquitetura de substituição. A análise cobre três frentes: diagnóstico da baseline, desenho e validação de uma arquitetura VEfficientNetB0, e comparação com uma alternativa em ensemble.</p>
+<p><strong>A baseline (FocusNet):</strong> operando com 34 CNNs + DNN, apresenta <strong>21,78% de acurácia</strong> e <strong>F1-macro de 0,1521</strong> sobre 482 requisições, com latência média de <strong>~6,2 min/requisição</strong>. Milho e Soja colapsam para 0% de recall (<em>mode collapse</em> com viés para Aveia), inviabilizando o uso em produção.</p>
+<p><strong>Proposta (VEfficientNetB0 + FiLM + Temporal Attention):</strong> modelo PyTorch que processa sequências de até 3 imagens Sentinel-Hub por talhão, condicionadas por dia após plantio e mês (embedding categórico) via modulação FiLM, com 2 camadas de MultiHeadAttention temporal. Treino em 2 fases (base congelada → fine-tuning das últimas 20 camadas) com label smoothing e AMP.</p>
+<p><strong>Resultados obtidos:</strong> F1-macro de <strong>0,876</strong> (máx 6000 amostras/cultura) e <strong>0,8500 ± 0,0087</strong> em validação cruzada 5-fold, com inferência de no max <strong>~200 ms/talhão</strong> — ordens de magnitude abaixo da baseline. Trigo e Aveia próximos de F1 = 1,0; Milho (0,71) e Feijão (0,77) permanecem os maiores desafios.</p>
+<p><strong>Ensemble (3 backbones + XGBoost):</strong> o ensemble entrega ganho marginal (+1,22% acurácia) mas custa mais tempo de treino (695 min vs 46 min), 3× mais inferência, e regride em Feijão. Feature importance mostra que EfficientNetB0 concentra 81,4% do peso no XGBoost.</p>
+<p><strong>Decisão:</strong> adotar o VEfficientNetB0. As próximas alavancas de melhoria são expansão de dados e ajuste de hiperparâmetros e aquisição de dados.</p>
+<hr>
+<h2 id="fluxo-focusnet">Fluxo FocusNet</h2>
+<p>Primeiramente o fluxograma do treinamento que era utilizado na focus net, este fluxo sofrera uma alterçao com a nova arquitetura, a meta é com que seja simplificado para que o tempo de treino e retreino seja minimizado.</p>
+<p><img src="file:////home/developer/Documentos/treino-ia/data_retreino/Fluxo%20FocusNet.svg" alt="alt text"></p>
+<h3 id="análise-de-baseline-serviço-focusnet"><strong>Análise de Baseline: Serviço Focusnet</strong></h3>
+<p>O modelo atual está operando em dois layers, o primeiro consiste em 34 redes CNN que irão realizar a extração das features da imagem, e o segundo layer é uma deep neural network comum que ira receber os vetores sigmoides dessa primeira camada e realizar uma &quot;avalição&quot; de qual cultura é mais provavel para a imagem.</p>
+<p>num nível de acurácia baixo e com uma latência que inviabiliza o seu uso em produção.</p>
+<p><strong>Parâmetros do Teste</strong></p>
+<ul>
+<li><strong>Tamanho da Amostra:</strong> 482 requisições completadas e avaliadas.</li>
+<li><strong>Distribuição:</strong> Dataset de teste equilibrado (aprox. 96 a 97 amostras por cultura).</li>
+<li><strong>Latência:</strong> Média de 369,4 segundos (~6,2 min) por requisição (picos de 9 minutos).</li>
+<li><strong>Desempenho Global:</strong> Acurácia de apenas 21,78% (105 acertos em 482) e F1-Score Macro de 0,1521.</li>
+</ul>
+<p><strong>Resultados Detalhados por Cultura</strong></p>
+<table>
+<thead>
+<tr>
+<th><strong>Cultura</strong></th>
+<th><strong>Amostras</strong></th>
+<th><strong>Acertos (TP)</strong></th>
+<th><strong>Falsos Positivos</strong></th>
+<th><strong>Taxa de Acerto (Recall)</strong></th>
+<th><strong>F1-Score</strong></th>
+<th><strong>Diagnóstico</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Aveia</strong></td>
+<td>97</td>
+<td>63</td>
+<td>247</td>
+<td>65,0%</td>
+<td>0,3096</td>
+<td>Falso Positivo Crítico</td>
+</tr>
+<tr>
+<td><strong>Trigo</strong></td>
+<td>96</td>
+<td>27</td>
+<td>88</td>
+<td>28,1%</td>
+<td>0,2559</td>
+<td>Baixa Confiança</td>
+</tr>
+<tr>
+<td><strong>Feijão</strong></td>
+<td>97</td>
+<td>15</td>
+<td>42</td>
+<td>15,5%</td>
+<td>0,1948</td>
+<td>Baixa Confiança</td>
+</tr>
+<tr>
+<td><strong>Milho</strong></td>
+<td>96</td>
+<td>0</td>
+<td>0</td>
+<td>0,0%</td>
+<td>0,0000</td>
+<td>Falha Estrutural</td>
+</tr>
+<tr>
+<td><strong>Soja</strong></td>
+<td>96</td>
+<td>0</td>
+<td>0</td>
+<td>0,0%</td>
+<td>0,0000</td>
+<td>Falha Estrutural</td>
+</tr>
+</tbody>
+</table>
+<h3 id="causas-raiz-do-colapso"><strong>Causas Raiz do Colapso</strong></h3>
+<p>Um resultado de exatamente 0% de acerto numa amostra de quase 200 itens (Milho e Soja) indica que o problema provavelmente esta ligado a:</p>
+<ol>
+<li><strong>Colapso do Modelo (<em>Mode Collapse</em>):</strong> O modelo desenvolveu um viés extremo em que utiliza &quot;Aveia&quot; como resposta padrão (default) sempre que não consegue extrair características úteis da imagem. Isto explica os 247 falsos positivos nesta classe e a supressão total das outras.</li>
+<li><strong>Erro de Pipeline ou Mapeamento:</strong> Algum problema no própiro serviço que esta chamando o modelo.</li>
+</ol>
+<h3 id="proposta-de-nova-arquitetura-modelo-deep-learning-multi-temporal"><strong>Proposta de Nova Arquitetura: Modelo (Deep Learning Multi-Temporal)</strong></h3>
+<p>Na primeira fase da análise de arquitetura sera feita a classificação de apenas 3 culutras e utilizando um dataset menor, para fim de se escolher a arquitura que se adapta melhor ao problema e assim podemos partir para a fase de seleção dos hiperparametros, podendo ser utilizado um algoritmo genêtico, grid search etc)</p>
+<p><strong>Análise inicial das arquiteturas</strong></p>
+<p>Classificar culturas agrícolas (milho, soja, trigo) a partir de imagens de satélite processadas e mascaradas ao contorno do talhão.</p>
+<p>Cada talhão possui até 3 imagens capturadas em diferentes estágios de crescimento após o plantio (exemplo abaixo para milho, soja e trigo):</p>
+<table>
+<thead>
+<tr>
+<th>Cultura</th>
+<th>Datas de observação (dias após plantio)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Milho</td>
+<td>d21, d31, d56</td>
+</tr>
+<tr>
+<td>Soja</td>
+<td>d21, d31, d56</td>
+</tr>
+<tr>
+<td>Trigo</td>
+<td>d26, d32, d47</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<p>Pipeline de Dados</p>
+<pre><code>KMLs (polígonos dos talhões)
+  └─→ Sentinel Hub API (download das imagens por data)
+        └─→ máscara KML aplicada (recorta ao contorno do talhão)
+              └─→ ./processadas/mascara_{uuid}_v_d{dia}.png
+                    └─→ SQLite (cultura, mês, lista de caminhos)
+                          └─→ gerar_sample_treino.py (amostra balanceada para analisar previamente as arquiteturas)
+                                └─→ gerar_db_completo.db (amostra com limpeza dos dados, utilizada para arquitetura final)
+</code></pre>
+<p>A nova abordagem testada utiliza um modelo preditivo baseado no histórico temporal do talhão agrícola. O pipeline (desenvolvido em PyTorch) processa sequências de até 3 imagens Sentinel-hub, utilizando metadados de plantio para contornar a similaridade visual inicial entre as culturas.</p>
+<h4 id="1-dados-de-entrada-por-talhão"><strong>1. Dados de Entrada (Por Talhão)</strong></h4>
+<p>O modelo abandona a inferência estática e passa a exigir uma sequência temporal associada a metadados climáticos/sazonais.</p>
+<table>
+<thead>
+<tr>
+<th><strong>Variável</strong></th>
+<th><strong>Formato/Tipo</strong></th>
+<th><strong>Função no Modelo</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>images</strong></td>
+<td>(T, 3, 224, 224)</td>
+<td>Sequência de até 3 imagens RGB normalizadas.</td>
+</tr>
+<tr>
+<td><strong>dias</strong></td>
+<td>float32 (T,)</td>
+<td>Dias após o plantio (normalizado).</td>
+</tr>
+<tr>
+<td><strong>mes</strong></td>
+<td>int64 categórico</td>
+<td>Mês de plantio (0-11). Captura o ciclo sazonal/safra.</td>
+</tr>
+<tr>
+<td><strong>mask</strong></td>
+<td>float32 (T,)</td>
+<td>Máscara de padding (1 = real, 0 = ausente).</td>
+</tr>
+</tbody>
+</table>
+<h4 id="2-arquitetura-da-rede"><strong>2. Arquitetura da Rede</strong></h4>
+<p>A rede processa a dimensão espacial e temporal em três estágios principais:</p>
+<ol>
+<li><strong>Extração de Features (Espacial):</strong> Utiliza uma <strong>EfficientNetB0</strong> (pré-treinada em ImageNet). Os pesos são partilhados ao longo do tempo, gerando um vetor de 1280 dimensões para cada imagem individual da sequência.</li>
+<li><strong>Modulação FiLM (Sazonal/Temporal):</strong> Os embeddings do mês de plantio e dos dias decorridos são usados para condicionar as features visuais extraídas. O modelo ajusta dinamicamente a importância das características da imagem usando a equação matemática:
+<span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>t</mi><mi>o</mi><mi>k</mi><mi>e</mi><mi>n</mi><mi>s</mi><mo>=</mo><mi>f</mi><mi>e</mi><mi>a</mi><mi>t</mi><mi>u</mi><mi>r</mi><mi>e</mi><mi>s</mi><mspace linebreak="newline"></mspace><mi>t</mi><mi>i</mi><mi>m</mi><mi>e</mi><mi>s</mi><mo stretchy="false">(</mo><mn>1</mn><mo>+</mo><mspace linebreak="newline"></mspace><mi>g</mi><mi>a</mi><mi>m</mi><mi>m</mi><mi>a</mi><mo stretchy="false">)</mo><mo>+</mo><mspace linebreak="newline"></mspace><mi>b</mi><mi>e</mi><mi>t</mi><mi>a</mi></mrow><annotation encoding="application/x-tex">tokens = features \\times (1 + \\gamma) + \\beta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">t</span><span class="mord mathnormal">o</span><span class="mord mathnormal" style="margin-right:0.03148em;">k</span><span class="mord mathnormal">e</span><span class="mord mathnormal">n</span><span class="mord mathnormal">s</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.10764em;">f</span><span class="mord mathnormal">e</span><span class="mord mathnormal">a</span><span class="mord mathnormal">t</span><span class="mord mathnormal">u</span><span class="mord mathnormal">res</span></span><span class="mspace newline"></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">t</span><span class="mord mathnormal">im</span><span class="mord mathnormal">es</span><span class="mopen">(</span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span></span><span class="mspace newline"></span><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">g</span><span class="mord mathnormal">amma</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span></span><span class="mspace newline"></span><span class="base"><span class="strut" style="height:0.6944em;"></span><span class="mord mathnormal">b</span><span class="mord mathnormal">e</span><span class="mord mathnormal">t</span><span class="mord mathnormal">a</span></span></span></span>
+<em>(Onde <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi></mrow><annotation encoding="application/x-tex">\gamma</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.05556em;">γ</span></span></span></span> e <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi></mrow><annotation encoding="application/x-tex">\beta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.05278em;">β</span></span></span></span> são iniciados a zero, garantindo estabilidade no início do treino).</em></li>
+<li><strong>Atenção Temporal (Agregação):</strong> Duas camadas de <strong>MultiHeadAttention</strong> (8 cabeças) avaliam a sequência temporal, ignorando imagens ausentes via <em>key padding masks</em>. Um <em>Mean Pooling</em> consolida as leituras numa única representação antes da classificação final (Linear -&gt; Dropout -&gt; 5 logits).</li>
+</ol>
+<h4 id="3-estratégia-de-treino-otimização-e-prevenção-de-viés"><strong>3. Estratégia de Treino (Otimização e Prevenção de Viés)</strong></h4>
+<p>Para evitar o <em>mode collapse</em> (o viés extremo de classificar tudo como Aveia observado na baseline), o treino implementa táticas agressivas de regularização:</p>
+<ul>
+<li><strong>Label Smoothing (0.1):</strong> Reduz a tendência do modelo em fases de crescimento onde as plantas são indistinguíveis.</li>
+<li><strong>Treino em 2 Fases:</strong>
+<ul>
+<li>* <em>Fase 1 (10 épocas):</em> Extrator base congelado, treinando apenas a cabeça de atenção e modulação.</li>
+<li><em>Fase 2 (15 épocas):</em> Descongelamento das últimas 20 camadas da EfficientNet para <em>fine-tuning</em> no domínio agrícola.</li>
+</ul>
+</li>
+<li><strong>Otimização de Hardware:</strong> Uso nativo de AMP (Precisionamento Misto) e <em>DataLoaders</em> em <em>pin_memory</em> para reduzir o gargalo de latência.</li>
+</ul>
+<h4 id="4-resultados-de-validação"><strong>4. Resultados de Validação</strong></h4>
+<p>Os testes foram realizados em uma amostra contendo um intervalo de 2500 a 9000 talhões para cada cultura (contendo 3 imagens cada). Os resultados obtidos estão descritos na tabela abaixo.</p>
+<table>
+<thead>
+<tr>
+<th><strong>Tamanho da Amostra</strong></th>
+<th><strong>Acurácia Global</strong></th>
+<th><strong>F1-Macro</strong></th>
+<th><strong>F1 Soja</strong></th>
+<th><strong>F1 Milho</strong></th>
+<th><strong>F1 Trigo</strong></th>
+<th><strong>F1 Aveia</strong></th>
+<th><strong>F1 Feijão</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Máx. 2500</td>
+<td>85,7%</td>
+<td>0,856</td>
+<td>0,820</td>
+<td>0,719</td>
+<td>0,995</td>
+<td>0,990</td>
+<td>0,756</td>
+</tr>
+<tr>
+<td><strong>Máx. 6000</strong></td>
+<td><strong>87,7%</strong></td>
+<td><strong>0,876</strong></td>
+<td><strong>0,853</strong></td>
+<td><strong>0,754</strong></td>
+<td><strong>1,000</strong></td>
+<td><strong>0,997</strong></td>
+<td><strong>0,776</strong></td>
+</tr>
+<tr>
+<td>Máx. 9000</td>
+<td>85,5%</td>
+<td>0,854</td>
+<td>0,822</td>
+<td>0,738</td>
+<td>1,000</td>
+<td>0,994</td>
+<td>0,718</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Conclusão Técnica:</strong> O modelo apresentou resultados definitivamente melhores do que o modelo atual. Apesar de que ainda apresenta dificuldades em diferenciar culturas como milho, feijão e soja. O que deve ser otimizado via aumento da quantidades de dados ou ajuste nos hiperparâmetros.</p>
+<h4 id="5-validação-cruzada-5-fold"><strong>5. Validação Cruzada 5-Fold</strong></h4>
+<p>Avaliação de robustez e generalização via 5-fold cross-validation no conjunto com até 6000 amostras por cultura.</p>
+<table>
+<thead>
+<tr>
+<th><strong>Fold</strong></th>
+<th><strong>Acurácia</strong></th>
+<th><strong>F1-Macro</strong></th>
+<th><strong>Tempo Médio (ms/amostra)</strong></th>
+<th><strong>GPU Peak (MB)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fold 1</td>
+<td>85,44%</td>
+<td>0,8529</td>
+<td>87,31</td>
+<td>2082,5</td>
+</tr>
+<tr>
+<td>Fold 2</td>
+<td>86,24%</td>
+<td>0,8609</td>
+<td>37,96</td>
+<td>1319,3</td>
+</tr>
+<tr>
+<td>Fold 3</td>
+<td>83,60%</td>
+<td>0,8348</td>
+<td>39,54</td>
+<td>1319,3</td>
+</tr>
+<tr>
+<td>Fold 4</td>
+<td>85,44%</td>
+<td>0,8539</td>
+<td>37,53</td>
+<td>1319,3</td>
+</tr>
+<tr>
+<td>Fold 5</td>
+<td>84,80%</td>
+<td>0,8473</td>
+<td>37,82</td>
+<td>1319,3</td>
+</tr>
+<tr>
+<td><strong>Média</strong></td>
+<td><strong>85,10% ± 0,88%</strong></td>
+<td><strong>0,8500 ± 0,0087</strong></td>
+<td><strong>48,03</strong></td>
+<td><strong>1471,97</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Interpretação:</strong></p>
+<ul>
+<li>Baixo desvio padrão (±0,88% acc / ±0,0087 F1) indica que o modelo generaliza de forma consistente entre os folds.</li>
+<li>Tempo médio de inferência de ~48 ms/amostra é ordens de magnitude inferior ao baseline da FocusNet (~369.400 ms).</li>
+<li>O Fold 1 apresenta consumo de GPU ligeiramente superior (2082 MB vs ~1319 MB nos demais), possivelmente por efeito de alocação inicial do CUDA.</li>
+</ul>
+<h4 id="6-métricas-de-treino-por-fold"><strong>6. Métricas de Treino por FOLD</strong></h4>
+<p>Resultados registrados ao final do treino de cada modelo individual, incluindo F1 por classe e tempo de treino.</p>
+<table>
+<thead>
+<tr>
+<th><strong>Fold</strong></th>
+<th><strong>Acurácia</strong></th>
+<th><strong>F1-Macro</strong></th>
+<th><strong>F1 Soja</strong></th>
+<th><strong>F1 Milho</strong></th>
+<th><strong>F1 Trigo</strong></th>
+<th><strong>F1 Aveia</strong></th>
+<th><strong>F1 Feijão</strong></th>
+<th><strong>Tempo Treino</strong></th>
+<th><strong>Inf. (ms)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fold 1</td>
+<td>84,23%</td>
+<td>0,8588</td>
+<td>0,8156</td>
+<td>0,7164</td>
+<td>0,9994</td>
+<td>0,9951</td>
+<td>0,7676</td>
+<td>39,7 min</td>
+<td>4,57</td>
+</tr>
+<tr>
+<td>Fold 2</td>
+<td>84,08%</td>
+<td>0,8546</td>
+<td>0,8042</td>
+<td>0,7020</td>
+<td>0,9982</td>
+<td>0,9871</td>
+<td>0,7814</td>
+<td>36,4 min</td>
+<td>4,64</td>
+</tr>
+<tr>
+<td>Fold 3</td>
+<td>83,70%</td>
+<td>0,8483</td>
+<td>0,8029</td>
+<td>0,7067</td>
+<td>0,9988</td>
+<td>0,9630</td>
+<td>0,7703</td>
+<td>55,7 min</td>
+<td>6,19</td>
+</tr>
+<tr>
+<td>Fold 4</td>
+<td>84,51%</td>
+<td>0,8610</td>
+<td>0,8116</td>
+<td>0,7260</td>
+<td>0,9994</td>
+<td>0,9935</td>
+<td>0,7745</td>
+<td>54,3 min</td>
+<td>5,55</td>
+</tr>
+<tr>
+<td>Fold 5</td>
+<td>84,35%</td>
+<td>0,8583</td>
+<td>0,8079</td>
+<td>0,7236</td>
+<td>0,9991</td>
+<td>0,9871</td>
+<td>0,7736</td>
+<td>44,3 min</td>
+<td>4,93</td>
+</tr>
+<tr>
+<td><strong>Média</strong></td>
+<td><strong>84,17%</strong></td>
+<td><strong>0,8562</strong></td>
+<td><strong>0,8084</strong></td>
+<td><strong>0,7149</strong></td>
+<td><strong>0,9990</strong></td>
+<td><strong>0,9852</strong></td>
+<td><strong>0,7735</strong></td>
+<td><strong>46,1 min</strong></td>
+<td><strong>5,18</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Observações por cultura:</strong></p>
+<ul>
+<li><strong>Trigo e Aveia:</strong> F1 próximo de 1,0 e 0,99 respectivamente — classes bem separadas espectralmente.</li>
+<li><strong>Soja:</strong> F1 médio de 0,81 — distinguível, mas com margem de melhora.</li>
+<li><strong>Feijão:</strong> F1 médio de 0,77 — classe mais desafiadora junto ao Milho.</li>
+<li><strong>Milho:</strong> F1 médio de 0,71 — pior desempenho consistente; confusão provável com Soja e Feijão em fases iniciais de crescimento.</li>
+</ul>
+<p>GPU utilizada no processo</p>
+<table>
+<thead>
+<tr>
+<th><strong>NVIDIA RTX PRO 1000 Blackwell Generation</strong></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+</table>
+<hr>
+<h2 id="comparação-e-decisão-arquitetural">Comparação e Decisão Arquitetural</h2>
+<h3 id="v7-efficientnetb0-solo-vs-ensemble-3-backbones--xgboost">V7 (EfficientNetB0 Solo) vs Ensemble (3 Backbones + XGBoost)</h3>
+<table>
+<thead>
+<tr>
+<th><strong>Critério</strong></th>
+<th><strong>V7 — EfficientNetB0</strong></th>
+<th><strong>Ensemble — 3 Backbones + XGBoost</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Acurácia</strong></td>
+<td>85,10% (média 5-fold) / 87,7% (máx)</td>
+<td>86,32%</td>
+</tr>
+<tr>
+<td><strong>F1-Macro</strong></td>
+<td>0,8500 (média) / 0,876 (máx)</td>
+<td>0,8626</td>
+</tr>
+<tr>
+<td><strong>F1 Trigo</strong></td>
+<td>0,9990</td>
+<td>1,0000</td>
+</tr>
+<tr>
+<td><strong>F1 Aveia</strong></td>
+<td>0,9852</td>
+<td>1,0000</td>
+</tr>
+<tr>
+<td><strong>F1 Milho</strong></td>
+<td>0,7149</td>
+<td>0,7505</td>
+</tr>
+<tr>
+<td><strong>F1 Soja</strong></td>
+<td>0,8084</td>
+<td>0,8215</td>
+</tr>
+<tr>
+<td><strong>F1 Feijão</strong></td>
+<td>0,7735</td>
+<td>0,7410</td>
+</tr>
+<tr>
+<td><strong>Tempo de Treino</strong></td>
+<td>~46 min</td>
+<td>~695 min (3 backbones + XGBoost)</td>
+</tr>
+<tr>
+<td><strong>Inferência</strong></td>
+<td>~5 ms / talhão</td>
+<td>~15 ms / talhão (3 backbones em série)</td>
+</tr>
+<tr>
+<td><strong>Nº de Modelos em Produção</strong></td>
+<td>1 arquivo <code>.pt</code></td>
+<td>3 arquivos <code>.pt</code> + modelo XGBoost</td>
+</tr>
+<tr>
+<td><strong>Complexidade de Retreino</strong></td>
+<td>Baixa — 1 modelo, 1 script</td>
+<td>Alta — 3 treinos independentes + extrator + XGBoost</td>
+</tr>
+<tr>
+<td><strong>Robustez (5-fold std)</strong></td>
+<td>±0,88% acc / ±0,0087 F1</td>
+<td>Não avaliado por cross-validation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="análise">Análise</h3>
+<p>O ensemble apresenta uma vantagem marginal em acurácia (+1,22% sobre a média do V7), e resolve perfeitamente Trigo e Aveia (F1 = 1,0). No entanto, <strong>regride em Feijão</strong> (0,741 vs 0,774 no V7), indicando que o XGBoost não aprendeu uma combinação superior para essa classe.</p>
+<p>Mais importante, o ganho não justifica o custo operacional:</p>
+<ul>
+<li><strong>Retreino</strong>: 15× mais lento (695 min vs 46 min). Qualquer expansão de dados ou ajuste de hiperparâmetros exige repetir os 3 backbones inteiros.</li>
+<li><strong>Inferência</strong>: 3× mais lenta e 3× o consumo de GPU — relevante em produção com volume alto de talhões.</li>
+<li><strong>Manutenção</strong>: 4 artefatos interdependentes (3 <code>.pt</code> + XGBoost) vs 1 arquivo auto-contido.</li>
+<li><strong>Feature importance</strong>: EfficientNetB0 representa 81,4% do peso do XGBoost — os outros dois backbones contribuem marginalmente, não justificando o custo adicional de treiná-los.</li>
+</ul>
+<h3 id="decisão">Decisão</h3>
+<blockquote>
+<p><strong>Arquitetura escolhida para produção: V7 — EfficientNetB0 + FiLM + Temporal Attention.</strong></p>
+</blockquote>
+<p>O V7 treinado com dataset máx. 6000 por cultura (F1-macro = 0,876) supera ou iguala o ensemble na maioria das métricas relevantes, com uma fração da complexidade operacional. A próxima alavanca de melhoria deve ser <strong>expansão de dados e ajuste de hiperparâmetros</strong> no V7, não diversidade de backbones.</p>
+<hr>
+<h2 id="trabalhos-futuros">Trabalhos Futuros</h2>
+<h3 id="fase-1--ajuste-no-serviço-atual--fase-crítica">Fase 1:  Ajuste no serviço atual  (Fase crítica)</h3>
+<p>Será necessário realizar ajustes na forma como o serviço atual da Focus Net trata os dados recebidos do usuário, melhorando o tratamento de erros e as chamadas aos serviços externos.
+Além disso, é importante aprimorar o tratamento de erros na aquisição de imagens e avaliar a necessidade de alterar a estratégia de chamadas, com o objetivo de reduzir o tempo de espera do cliente.</p>
+<h3 id="fase-2-ensemble-de-modelos-com-xgboost">Fase 2: Ensemble de Modelos com XGBoost</h3>
+<p>Testar e treinar múltiplos backbones com atenção temporal para extrair representações complementares:</p>
+<pre><code>├─── EfficientNetB0 + Temporal Attention (V7)  ─── features + probs
+├─── ResNet50 + Temporal Attention              ─── features + probs
+├─── ConvNeXt-Tiny + Temporal Attention         ─── features + probs
+│
+└─── XGBoost (learns optimal combination)  ─── final prediction
+</code></pre>
+<p><strong>Estratégia:</strong></p>
+<ol>
+<li>Treinar cada backbone com a mesma arquitetura temporal (FiLM + Attention)</li>
+<li>Extrair featureslate e probabilidades (logits) de cada modelo</li>
+<li>Concatenar outputs → treinar XGBoost para combinação ótima</li>
+<li>Objetivo: melhorar acurácia através de diversidade de representações</li>
+</ol>
+<h3 id="fase-3-expansão-de-dados--otimização-genética">Fase 3: Expansão de Dados + Otimização Genética</h3>
+<p>Se a Fase 2 não melhorar significativamente:</p>
+<ol>
+<li><strong>Coleta de mais dados:</strong> Treinar EfficientNet com dataset expandido</li>
+<li><strong>Algoritmo Genético:</strong> Desenvolver GA para otimização de:
+<ul>
+<li>Hyperparameters (learning rate, dropout, etc.)</li>
+<li>Arquitetura (número de camadas, attention heads)</li>
+<li>Estratégia de data augmentation</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="métricas-de-sucesso">Métricas de Sucesso</h2>
+<ul>
+<li>Acurácia &gt; 90% no conjunto de validação</li>
+<li>F1-macro &gt; 0.88</li>
+<li>XGBoost ensemble demonstrando melhoria &gt; 2% sobre modelo único</li>
+</ul>
+
+            <script async src="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.js"></script>
+            
+        </body>
+        </html>

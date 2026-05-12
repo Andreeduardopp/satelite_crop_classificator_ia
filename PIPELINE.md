@@ -3,6 +3,34 @@
 Este documento descreve o fluxo completo do pipeline, desde o download das imagens do Sentinel Hub até a geração da imagem processada salva em `./processadas/`.
 
 ---
+total de kmls 
+arquivos_kml_ARROZ | wc -l
+
+5791
+
+arquivos_kml_SOJA | wc -l
+
+159922
+
+arquivos_kml_FEIJAO | wc -l
+
+11614
+
+arquivos_kml_TRIGO | wc -l
+
+66944
+
+arquivos_kml_MILHO | wc -l
+
+126324
+
+arquivos_kml_AVEIA | wc -l
+
+4226
+
+arquivos_kml_CAFE | wc -l
+
+53093) 
 
 ## Visão Geral
 
