@@ -8,7 +8,8 @@ processadas
 src/mascaras/
 src/mascaras
 arquivos_kml_/
-!sample_treino_6k.db
+culturas/
+culturas.zip
 # Variáveis de ambiente
 .env
 .env.*
@@ -39,3 +40,16 @@ modelos/
 # IDE
 .vscode/
 .idea/
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+imagens/
+mascaras/
+processadas/
+*.egg-info
+
+# Virtual environments
+.venv

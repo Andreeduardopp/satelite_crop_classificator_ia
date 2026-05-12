@@ -16,7 +16,7 @@ logging.basicConfig(
 # ── Paths ─────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 TRAIN_SCRIPT = os.path.join(BASE_DIR, 'src', 'models', 'efficientnet_v7', 'train.py')
-DIR_TREINO = os.path.join(BASE_DIR, 'datasets', 'dataset_treino')
+DIR_TREINO = os.path.join(BASE_DIR, 'data', 'processed', 'datasets', 'dataset_treino')
 OUTPUT_BASE_DIR = os.path.join(BASE_DIR, 'src', 'models', 'efficientnet_v7', 'artifacts_5_folds')
 
 # Pode ser alterado se foram gerados mais ou menos datasets

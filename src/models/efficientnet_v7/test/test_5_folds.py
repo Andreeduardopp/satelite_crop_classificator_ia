@@ -37,7 +37,7 @@ except ImportError as e:
 
 # -- Configurações -------------------------------------------------------------
 N_FOLDS = 5
-DIR_TESTE = os.path.join(ROOT_DIR, 'datasets', 'dataset_teste')
+DIR_TESTE = os.path.join(ROOT_DIR, 'data', 'processed', 'datasets', 'dataset_teste')
 ARTIFACTS_DIR = os.path.join(V7_DIR, 'artifacts_5_folds')
 METRICS_DIR = os.path.join(V7_DIR, 'metrics')
 
