@@ -10,6 +10,9 @@ src/mascaras
 arquivos_kml_/
 culturas/
 culturas.zip
+.ibge_cache/
+my_sample/
+my_sample_large/
 # Variáveis de ambiente
 .env
 .env.*
