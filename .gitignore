@@ -18,12 +18,14 @@ my_sample_large/
 .env.*
 *.env
 *.pt
+*.kml
+*/data/
 *.npy
-
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
+*.png
 .venv/
 venv/
 env/
