@@ -202,3 +202,93 @@ Todas as features derivadas são calculadas no módulo `engineer_features()` em 
 - Confusion matrix por fold (diagnostica confusões específicas entre culturas)
 - Classification report detalhado (precision, recall, F1 por classe)
 
+---
+
+## Resultados
+
+### Treinamento (Cross-Validation 5-fold)
+
+O modelo foi treinado com **6.872 amostras** (7.000 no banco, 128 filtradas por `stages_covered < 3`), 510 features originais reduzidas a 306 após seleção, e 7 classes de cultura.
+
+| Modelo | Accuracy | F1 Macro | F1 Weighted |
+|--------|----------|----------|-------------|
+| **XGBoost** | **89.74%** | **0.8965** | **0.8967** |
+| ExtraTrees | 88.85% | 0.8877 | 0.8878 |
+| Ensemble | 89.39% | 0.8932 | 0.8933 |
+
+O XGBoost individual superou o ensemble — a combinação com ExtraTrees via soft voting diluiu levemente as predições.
+
+**Resultado por classe (treino CV):**
+
+| Cultura | Precision | Recall | F1 | Suporte |
+|---------|-----------|--------|----|---------|
+| CAFE | 0.975 | 0.988 | 0.982 | 994 |
+| FEIJAO | 0.945 | 0.983 | 0.963 | 991 |
+| ARROZ | 0.952 | 0.962 | 0.957 | 976 |
+| SOJA | 0.893 | 0.943 | 0.917 | 995 |
+| MILHO | 0.930 | 0.812 | 0.867 | 937 |
+| AVEIA | 0.785 | 0.811 | 0.798 | 988 |
+| TRIGO | 0.805 | 0.779 | 0.792 | 991 |
+
+---
+
+### Avaliação em Dados de Teste (hold-out)
+
+Avaliação com **347 amostras** de teste independentes (50 KMLs por cultura, nunca vistos durante o treinamento), processadas pela mesma pipeline de extração de features.
+
+| Métrica | Treino (CV) | Teste | Gap |
+|---------|-------------|-------|-----|
+| Accuracy | 89.74% | 85.88% | -3.86pp |
+| F1 Macro | 0.8965 | 0.8601 | -0.0364 |
+| F1 Weighted | 0.8967 | 0.8601 | -0.0366 |
+
+O gap treino→teste de ~3.6pp em F1 é moderado, indicando um nível aceitável de overfitting. A taxa de nulos no teste (39.2%) foi significativamente maior que no treino (23.1%), o que contribui para a queda.
+
+**Resultado por classe (teste) e comparação com treino:**
+
+| Cultura | F1 Treino | F1 Teste | Delta | Precision | Recall |
+|---------|-----------|----------|-------|-----------|--------|
+| CAFE | 0.982 | 0.980 | -0.002 | 1.000 | 0.960 |
+| ARROZ | 0.957 | 0.957 | +0.000 | 1.000 | 0.918 |
+| FEIJAO | 0.963 | 0.862 | **-0.101** | 0.783 | 0.959 |
+| SOJA | 0.917 | 0.870 | -0.047 | 0.952 | 0.800 |
+| TRIGO | 0.792 | 0.808 | +0.016 | 0.778 | 0.840 |
+| AVEIA | 0.798 | 0.792 | -0.006 | 0.826 | 0.760 |
+| MILHO | 0.867 | 0.753 | **-0.115** | 0.731 | 0.776 |
+
+---
+
+### Análise da Matriz de Confusão (Teste)
+
+A matriz de confusão do teste revela os padrões de erro do modelo em dados não vistos:
+
+**Classes estáveis (generalizam bem):**
+- **CAFE** (96% recall, 100% precision): Fenologia de ciclo longo (~270 dias) produz um perfil espectral completamente distinto. Apenas 2 amostras confundidas com MILHO.
+- **ARROZ** (91.8% recall, 100% precision): Perfil hídrico (NDWI) característico de cultivo irrigado/alagado. Erros menores para MILHO (6.1%) e SOJA (2%).
+- **TRIGO** (84% recall): Mantém desempenho similar ao treino. Confusão exclusiva com AVEIA (16%) — ambas cereais de inverno, plantadas na mesma época.
+
+**Classes com queda de desempenho:**
+- **MILHO** (F1 caiu de 0.867 → 0.753): Principal confusão com FEIJAO (22.4% dos MILHO classificados como FEIJAO). Em dados novos, a sobreposição espectral no estágio vegetativo é mais problemática. Também absorve erros de SOJA (16% de SOJA → MILHO).
+- **FEIJAO** (F1 caiu de 0.963 → 0.862): O recall permanece alto (95.9%), mas a precision caiu para 78.3%. O modelo classifica muitas amostras de MILHO como FEIJAO, porque ambas têm picos NDVI semelhantes no ciclo curto.
+- **SOJA** (F1 caiu de 0.917 → 0.870): 16% de SOJA classificado como MILHO e 4% como FEIJAO. A alta precision (95.2%) indica que quando o modelo prediz SOJA, geralmente está correto.
+
+**Padrões de confusão dominantes:**
+1. **AVEIA ↔ TRIGO** (24% de AVEIA→TRIGO, 16% de TRIGO→AVEIA): Cereais de inverno com fenologia quase idêntica. Este é um limite estrutural — a separação depende fortemente de features SAR (VV_median_maturity) e localização geográfica.
+2. **MILHO ↔ FEIJAO** (22.4% de MILHO→FEIJAO): Ambas culturas de verão com ciclo relativamente curto. No teste, este par de confusão se tornou mais severo que no treino, sugerindo que o modelo memorizou padrões geográficos do treino que não transferem bem.
+3. **SOJA → MILHO** (16%): Sobreposição no estágio vegetativo entre as duas maiores culturas de verão do Brasil.
+
+---
+
+### Diagnóstico e Próximos Passos
+
+**O que funciona:**
+- CAFE, ARROZ e TRIGO generalizam bem — seus perfis fenológicos são suficientemente distintos
+- O gap geral treino→teste de 3.6pp F1 é aceitável para um primeiro modelo
+- SAR (VV, VH) é a categoria de features mais importante, validando a decisão de incluir Sentinel-1
+
+**O que precisa melhorar:**
+- **MILHO ↔ FEIJAO**: A confusão sugere que features de ciclo de crescimento (duração, velocidade) são mais discriminativas que os valores absolutos dos índices. Considerar adicionar features baseadas na diferença de duração do ciclo e na taxa de mudança do SAR
+- **Dependência geográfica**: O modelo usa lat/lon como features top-5 em importância. Isso ajuda no treino mas indica risco de overfitting regional. Testar desempenho com exclusão de lat/lon
+- **Taxa de nulos no teste (39.2% vs 23.1% no treino)**: A cobertura de nuvens nos períodos de teste impacta mais as fases iniciais (baseline, emergence). Considerar estratégias de imputação temporal
+- **Amostra de teste pequena (50/classe)**: A avaliação com 347 amostras tem variância alta. Executar a avaliação completa com as 7.000 amostras de teste para métricas mais confiáveis
+

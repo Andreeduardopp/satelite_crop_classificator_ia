@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-06-11T10:18:04.490545",
+  "version": "v3",
+  "best_model": "ensemble",
+  "n_samples": 7000,
+  "n_features_original": 476,
+  "n_features_selected": 285,
+  "n_classes": 7,
+  "classes": [
+    "ARROZ",
+    "AVEIA",
+    "CAFE",
+    "FEIJAO",
+    "MILHO",
+    "SOJA",
+    "TRIGO"
+  ],
+  "cv_folds": 5,
+  "optuna_trials_xgb": 50,
+  "optuna_trials_et": 25,
+  "accuracy": 0.876,
+  "f1_macro": 0.8759,
+  "f1_weighted": 0.8759,
+  "null_rate": 0.127,
+  "all_results": {
+    "xgboost": {
+      "accuracy": 0.8754,
+      "f1_macro": 0.8753,
+      "f1_weighted": 0.8753
+    },
+    "extratrees": {
+      "accuracy": 0.8619,
+      "f1_macro": 0.8619,
+      "f1_weighted": 0.8619
+    },
+    "ensemble": {
+      "accuracy": 0.876,
+      "f1_macro": 0.8759,
+      "f1_weighted": 0.8759
+    }
+  },
+  "per_class": {
+    "ARROZ": {
+      "precision": 0.9562,
+      "recall": 0.961,
+      "f1": 0.9586,
+      "support": 1000
+    },
+    "AVEIA": {
+      "precision": 0.7251,
+      "recall": 0.736,
+      "f1": 0.7305,
+      "support": 1000
+    },
+    "CAFE": {
+      "precision": 0.9763,
+      "recall": 0.99,
+      "f1": 0.9831,
+      "support": 1000
+    },
+    "FEIJAO": {
+      "precision": 0.9324,
+      "recall": 0.911,
+      "f1": 0.9216,
+      "support": 1000
+    },
+    "MILHO": {
+      "precision": 0.9302,
+      "recall": 0.88,
+      "f1": 0.9044,
+      "support": 1000
+    },
+    "SOJA": {
+      "precision": 0.8822,
+      "recall": 0.936,
+      "f1": 0.9083,
+      "support": 1000
+    },
+    "TRIGO": {
+      "precision": 0.7312,
+      "recall": 0.718,
+      "f1": 0.7245,
+      "support": 1000
+    }
+  }
+}

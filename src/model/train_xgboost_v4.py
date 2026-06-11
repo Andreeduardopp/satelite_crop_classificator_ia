@@ -188,9 +188,10 @@ def load_data(
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found: {db_path}")
     with sqlite3.connect(db_path) as conn:
-        df = pd.read_sql("SELECT * FROM phenology_features", conn)
+        # Filter out AVEIA from the query directly
+        df = pd.read_sql("SELECT * FROM phenology_features WHERE crop_label != 'AVEIA'", conn)
     if df.empty:
-        raise ValueError("phenology_features table is empty")
+        raise ValueError("phenology_features table is empty or contains no non-AVEIA crops")
 
     for col in df.columns:
         if col not in TEXT_COLS:
@@ -332,7 +333,7 @@ def tune_xgb(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(
         direction="maximize",
-        study_name="xgb_v3",
+        study_name="xgb_v4",
         pruner=optuna.pruners.MedianPruner(n_warmup_steps=10),
     )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
@@ -365,7 +366,7 @@ def tune_extratrees(
         return scores.mean()
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    study = optuna.create_study(direction="maximize", study_name="et_v3")
+    study = optuna.create_study(direction="maximize", study_name="et_v4")
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
     logger.info("Best ET F1 macro: %.4f", study.best_value)
@@ -383,7 +384,7 @@ def train_and_evaluate(
     n_folds: int = 5,
     optuna_trials_xgb: int = 80,
     optuna_trials_et: int = 40,
-    output_dir: str = "src/model/output_v3",
+    output_dir: str = "src/model/output_v4",
 ) -> VotingClassifier:
     os.makedirs(output_dir, exist_ok=True)
 
@@ -480,7 +481,7 @@ def train_and_evaluate(
 
     metrics = {
         "timestamp": datetime.now().isoformat(),
-        "version": "v3",
+        "version": "v4",
         "best_model": best_name,
         "n_samples": int(len(y)),
         "n_features_original": int(X.shape[1]),
@@ -649,7 +650,7 @@ def _plot_feature_importance_by_category(model: xgb.XGBClassifier, feature_names
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Train XGBoost crop classifier v3")
+    parser = argparse.ArgumentParser(description="Train XGBoost crop classifier v4")
     parser.add_argument("--db", default=os.path.join("src", "data", "features", "features.db"),
                         help="Path to features SQLite DB")
     parser.add_argument("--year", type=int, default=None,
@@ -666,7 +667,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join("src", "model", "runs", run_ts)
+    # Save runs in a separate directory runs_v4
+    output_dir = os.path.join("src", "model", "runs_v4", run_ts)
 
     X, y, feature_names, le = load_data(
         args.db,

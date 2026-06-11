@@ -1,0 +1,28 @@
+{
+  "xgboost": {
+    "n_estimators": 466,
+    "max_depth": 9,
+    "learning_rate": 0.040418554030423715,
+    "subsample": 0.7111018094089816,
+    "colsample_bytree": 0.9420009931007775,
+    "min_child_weight": 7,
+    "gamma": 0.36653530451004857,
+    "reg_alpha": 0.601785774936838,
+    "reg_lambda": 1.2029392825654377,
+    "max_delta_step": 4,
+    "objective": "multi:softprob",
+    "eval_metric": "mlogloss",
+    "tree_method": "hist",
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "extratrees": {
+    "n_estimators": 879,
+    "max_depth": 30,
+    "min_samples_split": 2,
+    "min_samples_leaf": 1,
+    "max_features": 0.7355296670682726,
+    "random_state": 42,
+    "n_jobs": -1
+  }
+}
