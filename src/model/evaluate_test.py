@@ -25,7 +25,7 @@ import seaborn as sns
 
 from src.pipelines import phenology_feature_pipeline_v4 as pipeline_mod
 from src.pipelines.phenology_feature_pipeline_v4 import PhenologyFeaturePipeline
-from src.model.train_xgboost_v3 import engineer_features, add_null_indicators, TEXT_COLS
+from src.model.train_xgboost_v4 import engineer_features, add_null_indicators, TEXT_COLS
 from src.data_ingestion.request_sentinel_v1 import SentinelHubService
 
 logger = logging.getLogger(__name__)

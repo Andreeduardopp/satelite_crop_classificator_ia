@@ -161,7 +161,46 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             denom = late_mean.replace(0, np.nan)
             df[f"{idx}_early_late_ratio"] = early_mean / denom
 
+    # 12. C4-milestone features (MILHO is C4, rest are C3 except CAFE which is C3)
+    stages_ordered = ["emergence", "vegetative", "flowering", "grain_fill", "maturity"]
+    idx = "NDVI"
+    stage_cols = [f"{idx}_mean_{s}" for s in stages_ordered if f"{idx}_mean_{s}" in df.columns]
+    if stage_cols:
+        subset = df[stage_cols]
+        valid = subset.notna().any(axis=1)
+        stage_to_i = {s: i for i, s in enumerate(stages_ordered)}
+        peak_stage = subset.idxmax(axis=1).map(lambda x: stage_to_i.get(x.replace(f"{idx}_mean_", ""), np.nan))
+        df["NDVI_c4_milestone_idx"] = peak_stage.where(valid, np.nan)
+        df["NDVI_c4_milestone_stage"] = subset.idxmax(axis=1).where(valid)
+        cumsum = subset.cumsum(axis=1)
+        half_max = cumsum.max(axis=1) / 2.0
+        reached = (cumsum >= half_max.values.reshape(-1, 1)).idxmax(axis=1).map(
+            lambda x: stage_to_i.get(x.replace(f"{idx}_mean_", ""), np.nan)
+        )
+        df["NDVI_c4_cumulative_half_stage"] = reached.where(valid, np.nan)
+    for idx in ["NDVI", "EVI", "NDWI"]:
+        for stage in ["vegetative", "flowering"]:
+            bl = f"{idx}_mean_baseline"
+            sc = f"{idx}_mean_{stage}"
+            if bl in df.columns and sc in df.columns:
+                denom = df[sc].replace(0, np.nan)
+                ratio = (denom - df[bl]) / denom
+                df[f"{idx}_rise_{stage}_vs_baseline"] = ratio
+
+    # NOTE: do NOT derive any feature from `crop_label` here — that is the target.
+    # `is_c4 = (crop_label == "MILHO")` was target leakage: perfect in training,
+    # absent at inference (no label), which silently breaks MILHO in production.
+    _assert_no_label_leakage(df)
+
     return df
+
+
+def _assert_no_label_leakage(df: pd.DataFrame) -> None:
+    """Guard against accidentally engineering a feature out of the target label."""
+    leaked = [c for c in ("is_c4", "is_c4_x_NDVI_peak_stage",
+                          "is_c4_x_EVI_senescence_rate") if c in df.columns]
+    if leaked:
+        raise ValueError(f"Label-derived features present (target leakage): {leaked}")
 
 
 def add_null_indicators(X: pd.DataFrame) -> pd.DataFrame:
@@ -196,6 +235,18 @@ def load_data(
     for col in df.columns:
         if col not in TEXT_COLS:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Train only on fields with a real (parseable) planting date. Rows whose
+    # planting_date was missing/estimated would have phenological stage windows
+    # anchored to a guessed date, corrupting every stage feature.
+    before = len(df)
+    valid_planting = pd.to_datetime(df["planting_date"], errors="coerce").notna()
+    df = df[valid_planting].reset_index(drop=True)
+    dropped = before - len(df)
+    if dropped:
+        logger.info("Dropped %d/%d rows without a valid planting_date", dropped, before)
+    if df.empty:
+        raise ValueError("No rows left after filtering for valid planting_date")
 
     if min_stages > 0:
         before = len(df)
@@ -327,6 +378,8 @@ def tune_xgb(
             "n_jobs": -1,
         }
         model = xgb.XGBClassifier(**params)
+        # Training set is class-balanced (equal samples/crop), so class weighting
+        # is a no-op here; keep a plain macro-F1 CV objective.
         scores = cross_val_score(model, X, y, cv=cv, scoring="f1_macro", n_jobs=1)
         return scores.mean()
 

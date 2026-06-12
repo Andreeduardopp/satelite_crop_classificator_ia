@@ -342,7 +342,6 @@ def _normalize_crop_name(raw: str) -> str | None:
             return canonical
     return None
 
-
 def parse_metadata_from_filename(filename: str) -> dict | None:
     match = FILENAME_REGEX.match(filename)
     if not match:
