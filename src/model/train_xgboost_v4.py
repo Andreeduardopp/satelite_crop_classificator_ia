@@ -169,15 +169,20 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         subset = df[stage_cols]
         valid = subset.notna().any(axis=1)
         stage_to_i = {s: i for i, s in enumerate(stages_ordered)}
-        peak_stage = subset.idxmax(axis=1).map(lambda x: stage_to_i.get(x.replace(f"{idx}_mean_", ""), np.nan))
-        df["NDVI_c4_milestone_idx"] = peak_stage.where(valid, np.nan)
-        df["NDVI_c4_milestone_stage"] = subset.idxmax(axis=1).where(valid)
-        cumsum = subset.cumsum(axis=1)
-        half_max = cumsum.max(axis=1) / 2.0
-        reached = (cumsum >= half_max.values.reshape(-1, 1)).idxmax(axis=1).map(
-            lambda x: stage_to_i.get(x.replace(f"{idx}_mean_", ""), np.nan)
-        )
-        df["NDVI_c4_cumulative_half_stage"] = reached.where(valid, np.nan)
+        df["NDVI_c4_milestone_idx"] = np.nan
+        df["NDVI_c4_cumulative_half_stage"] = np.nan
+        if valid.any():
+            vs = subset[valid]
+            peak_labels = vs.idxmax(axis=1)
+            df.loc[valid, "NDVI_c4_milestone_idx"] = peak_labels.map(
+                lambda x: stage_to_i.get(x.replace(f"{idx}_mean_", ""), np.nan)
+            ).values
+            cumsum = vs.cumsum(axis=1)
+            half_max = cumsum.max(axis=1) / 2.0
+            reached = (cumsum >= half_max.values.reshape(-1, 1)).idxmax(axis=1).map(
+                lambda x: stage_to_i.get(x.replace(f"{idx}_mean_", ""), np.nan)
+            )
+            df.loc[valid, "NDVI_c4_cumulative_half_stage"] = reached.values
     for idx in ["NDVI", "EVI", "NDWI"]:
         for stage in ["vegetative", "flowering"]:
             bl = f"{idx}_mean_baseline"
@@ -228,7 +233,8 @@ def load_data(
         raise FileNotFoundError(f"Database not found: {db_path}")
     with sqlite3.connect(db_path) as conn:
         # Filter out AVEIA from the query directly
-        df = pd.read_sql("SELECT * FROM phenology_features WHERE crop_label != 'AVEIA'", conn)
+        # df = pd.read_sql("SELECT * FROM phenology_features WHERE crop_label != 'AVEIA'", conn)
+        df = pd.read_sql("SELECT * FROM phenology_features", conn)
     if df.empty:
         raise ValueError("phenology_features table is empty or contains no non-AVEIA crops")
 
