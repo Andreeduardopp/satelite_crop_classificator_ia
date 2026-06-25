@@ -1,0 +1,181 @@
+{
+  "timestamp": "2026-06-25T05:04:46.318132",
+  "version": "v6",
+  "config": {
+    "date_mode": "cyclic",
+    "class_balance": true,
+    "soja_second_season_weight": 6.0,
+    "second_season_months": [
+      1,
+      2,
+      3
+    ],
+    "abstain": true,
+    "abstain_target_acc": 0.93
+  },
+  "excluded_crops": [
+    "AVEIA"
+  ],
+  "n_samples": 5169,
+  "n_features_original": 808,
+  "n_features_selected": 484,
+  "n_classes": 6,
+  "classes": [
+    "ARROZ",
+    "CAFE",
+    "FEIJAO",
+    "MILHO",
+    "SOJA",
+    "TRIGO"
+  ],
+  "cv_folds": 5,
+  "optuna_trials": 0,
+  "accuracy": 0.9482,
+  "f1_macro": 0.9499,
+  "f1_weighted": 0.9481,
+  "null_rate": 0.0825,
+  "season_diagnostic": {
+    "soja_total": 773,
+    "soja_main_season": 601,
+    "soja_second_season": 172,
+    "soja_main_recall": 0.9633943427620633,
+    "soja_second_season_recall": 0.9011627906976745,
+    "soja_to_milho": 13,
+    "milho_to_soja": 44,
+    "second_season_soja_to_milho": 7
+  },
+  "abstain_policy": {
+    "metric": "max_softmax_probability",
+    "abstain_label": "NAO_CLASSIFICAVEL",
+    "rule": "predict crop only if max class probability >= threshold, else abstain",
+    "target_covered_accuracy": 0.93,
+    "threshold": 0.3,
+    "coverage_at_threshold": 1.0,
+    "covered_accuracy_at_threshold": 0.9482,
+    "soja_milho_accuracy_at_threshold": 0.8827,
+    "sweep": [
+      {
+        "threshold": 0.3,
+        "coverage": 1.0,
+        "covered_accuracy": 0.9482,
+        "soja_milho_accuracy": 0.8827
+      },
+      {
+        "threshold": 0.35,
+        "coverage": 0.9998,
+        "covered_accuracy": 0.9483,
+        "soja_milho_accuracy": 0.8831
+      },
+      {
+        "threshold": 0.4,
+        "coverage": 0.9971,
+        "covered_accuracy": 0.9499,
+        "soja_milho_accuracy": 0.8855
+      },
+      {
+        "threshold": 0.45,
+        "coverage": 0.9938,
+        "covered_accuracy": 0.9517,
+        "soja_milho_accuracy": 0.8882
+      },
+      {
+        "threshold": 0.5,
+        "coverage": 0.9884,
+        "covered_accuracy": 0.9554,
+        "soja_milho_accuracy": 0.8963
+      },
+      {
+        "threshold": 0.55,
+        "coverage": 0.9778,
+        "covered_accuracy": 0.9602,
+        "soja_milho_accuracy": 0.9068
+      },
+      {
+        "threshold": 0.6,
+        "coverage": 0.9677,
+        "covered_accuracy": 0.9644,
+        "soja_milho_accuracy": 0.9157
+      },
+      {
+        "threshold": 0.65,
+        "coverage": 0.959,
+        "covered_accuracy": 0.9675,
+        "soja_milho_accuracy": 0.9219
+      },
+      {
+        "threshold": 0.7,
+        "coverage": 0.9485,
+        "covered_accuracy": 0.9698,
+        "soja_milho_accuracy": 0.9258
+      },
+      {
+        "threshold": 0.75,
+        "coverage": 0.9373,
+        "covered_accuracy": 0.9734,
+        "soja_milho_accuracy": 0.9336
+      },
+      {
+        "threshold": 0.8,
+        "coverage": 0.9216,
+        "covered_accuracy": 0.9771,
+        "soja_milho_accuracy": 0.9423
+      },
+      {
+        "threshold": 0.85,
+        "coverage": 0.9033,
+        "covered_accuracy": 0.9814,
+        "soja_milho_accuracy": 0.9517
+      },
+      {
+        "threshold": 0.9,
+        "coverage": 0.8775,
+        "covered_accuracy": 0.9861,
+        "soja_milho_accuracy": 0.9639
+      },
+      {
+        "threshold": 0.95,
+        "coverage": 0.8172,
+        "covered_accuracy": 0.9922,
+        "soja_milho_accuracy": 0.9784
+      }
+    ]
+  },
+  "per_class": {
+    "ARROZ": {
+      "precision": 0.9565,
+      "recall": 0.967,
+      "f1": 0.9617,
+      "support": 637
+    },
+    "CAFE": {
+      "precision": 0.9561,
+      "recall": 0.9856,
+      "f1": 0.9706,
+      "support": 486
+    },
+    "FEIJAO": {
+      "precision": 0.9347,
+      "recall": 0.9163,
+      "f1": 0.9254,
+      "support": 1016
+    },
+    "MILHO": {
+      "precision": 0.9552,
+      "recall": 0.9058,
+      "f1": 0.9299,
+      "support": 1200
+    },
+    "SOJA": {
+      "precision": 0.8843,
+      "recall": 0.9495,
+      "f1": 0.9158,
+      "support": 773
+    },
+    "TRIGO": {
+      "precision": 0.9943,
+      "recall": 0.9972,
+      "f1": 0.9957,
+      "support": 1057
+    }
+  }
+}

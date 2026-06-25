@@ -23,9 +23,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from src.pipelines import phenology_feature_pipeline_v4 as pipeline_mod
-from src.pipelines.phenology_feature_pipeline_v4 import PhenologyFeaturePipeline
-from src.model.train_xgboost_v4 import engineer_features, add_null_indicators, TEXT_COLS
+# v6 model was trained on v5-pipeline features (red-edge NDRE/CIRE/MTCI/PSRI/NDMI +
+# SAR + null-stage interpolation). Test features MUST be extracted with the same
+# pipeline and engineered with the same v6 functions or the column space won't match.
+from src.pipelines import phenology_feature_pipeline_v5 as pipeline_mod
+from src.pipelines.phenology_feature_pipeline_v5 import PhenologyFeaturePipeline
+from src.model.train_xgboost_v6 import (
+    engineer_features,
+    add_null_indicators,
+    season_diagnostic,
+    TEXT_COLS,
+    NON_FEATURE_COLS,
+    DEFAULT_SECOND_SEASON_MONTHS,
+    ABSTAIN_LABEL,
+)
 from src.data_ingestion.request_sentinel_v1 import SentinelHubService
 
 logger = logging.getLogger(__name__)
@@ -127,8 +138,18 @@ def evaluate_model(
     test_db_path: str,
     output_dir: str,
     min_stages: int = 3,
+    exclude_field_ids: set[str] | None = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
+
+    # -- Load the training run's config first (drives date_mode + season months) --
+    with open(os.path.join(run_dir, "metrics.json")) as f:
+        train_metrics = json.load(f)
+    cfg = train_metrics.get("config", {})
+    date_mode = cfg.get("date_mode", "full")
+    ss_months = cfg.get("second_season_months", DEFAULT_SECOND_SEASON_MONTHS)
+    logger.info("Eval against run=%s | date_mode=%s | second_season_months=%s",
+                run_dir, date_mode, ss_months)
 
     # -- Load test features from DB -------------------------------------------
     with sqlite3.connect(test_db_path) as conn:
@@ -140,6 +161,21 @@ def evaluate_model(
 
     logger.info("Test data loaded: %d samples", len(df))
 
+    # -- Sanity check: the v6 model needs red-edge indices in the test DB ------
+    if not any(c.startswith("NDRE_") for c in df.columns):
+        logger.error(
+            "Test DB has no red-edge (NDRE/CIRE/MTCI/PSRI/NDMI) columns — it was "
+            "built with an old pipeline. Re-extract with phenology_feature_pipeline_v5 "
+            "before evaluating the v6 model (run without --skip-extraction)."
+        )
+        return
+
+    # -- Drop leaked fields (e.g. augmentation fields that also live in test) --
+    if exclude_field_ids:
+        before = len(df)
+        df = df[~df["field_id"].isin(exclude_field_ids)].reset_index(drop=True)
+        logger.info("Excluded %d leaked field(s) from test set", before - len(df))
+
     for col in df.columns:
         if col not in TEXT_COLS:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -149,13 +185,10 @@ def evaluate_model(
         df = df[df["stages_covered"] >= min_stages].reset_index(drop=True)
         logger.info("Filtered stages_covered >= %d: %d -> %d", min_stages, before, len(df))
 
-    # -- Same feature engineering as training ---------------------------------
-    df = engineer_features(df)
+    # -- Same feature engineering as training (same date_mode!) ----------------
+    df = engineer_features(df, date_mode=date_mode)
 
-    feature_cols = [
-        c for c in df.columns
-        if c not in TEXT_COLS and c not in {"stages_covered", "sar_backfill_done"}
-    ]
+    feature_cols = [c for c in df.columns if c not in NON_FEATURE_COLS]
     X = df[feature_cols].astype(np.float32)
     X = add_null_indicators(X)
 
@@ -175,9 +208,6 @@ def evaluate_model(
     X_sel = X[selected_features].copy()
 
     # -- Ground truth ---------------------------------------------------------
-    with open(os.path.join(run_dir, "metrics.json")) as f:
-        train_metrics = json.load(f)
-
     le = LabelEncoder()
     le.classes_ = np.array(train_metrics["classes"])
 
@@ -185,16 +215,29 @@ def evaluate_model(
     if not known_mask.all():
         n_drop = (~known_mask).sum()
         logger.warning("Dropping %d samples with unknown crop labels", n_drop)
+        # Filter BOTH frames by the same boolean mask before any index reset —
+        # resetting df first and then indexing X_sel by df.index silently grabs
+        # the wrong (first-M positional) rows and misaligns X from y.
+        X_sel = X_sel[known_mask.to_numpy()].reset_index(drop=True)
         df = df[known_mask].reset_index(drop=True)
-        X_sel = X_sel.loc[df.index].reset_index(drop=True)
 
     y_true = le.transform(df["crop_label"])
+
+    # -- Season metadata (for the diagnostic that actually matters) ------------
+    pmonth = pd.to_datetime(df["planting_date"], errors="coerce").dt.month
+    crop_upper = df["crop_label"].str.upper()
+    meta = pd.DataFrame({
+        "crop_label": df["crop_label"].values,
+        "planting_month": pmonth.values,
+        "is_soja_second_season": ((crop_upper == "SOJA") & pmonth.isin(ss_months)).values,
+    })
 
     # -- Load model & predict -------------------------------------------------
     model = xgb.XGBClassifier()
     model.load_model(os.path.join(run_dir, "xgboost_crop_classifier.json"))
 
-    y_pred = model.predict(X_sel)
+    proba = model.predict_proba(X_sel)
+    y_pred = proba.argmax(axis=1)
 
     # -- Metrics --------------------------------------------------------------
     acc = accuracy_score(y_true, y_pred)
@@ -208,6 +251,12 @@ def evaluate_model(
     report = classification_report(y_true, y_pred, target_names=le.classes_, output_dict=True)
     report_str = classification_report(y_true, y_pred, target_names=le.classes_)
     print(f"\nTEST Classification Report:\n{report_str}")
+
+    # -- Season-stratified diagnostic (THE safrinha number) -------------------
+    diag = season_diagnostic(y_true, y_pred, le, meta)
+
+    # -- Abstain policy (E): apply the trained gate to the test predictions ----
+    abstain = _apply_abstain_policy(run_dir, proba, y_true, le, meta)
 
     # -- Confusion matrix -----------------------------------------------------
     cm = confusion_matrix(y_true, y_pred)
@@ -223,6 +272,8 @@ def evaluate_model(
         "f1_macro": round(f1m, 4),
         "f1_weighted": round(f1w, 4),
         "null_rate": round(float(X_sel.isna().mean().mean()), 4),
+        "season_diagnostic": diag,
+        "abstain": abstain,
         "per_class": {
             cls: {
                 "precision": round(report[cls]["precision"], 4),
@@ -240,6 +291,9 @@ def evaluate_model(
             "test_f1_macro": round(f1m, 4),
             "overfit_gap_acc": round(train_metrics["accuracy"] - acc, 4),
             "overfit_gap_f1": round(train_metrics["f1_macro"] - f1m, 4),
+            "train_second_season_soja_recall":
+                train_metrics.get("season_diagnostic", {}).get("soja_second_season_recall"),
+            "test_second_season_soja_recall": diag.get("soja_second_season_recall"),
         },
     }
 
@@ -257,6 +311,57 @@ def evaluate_model(
         test_f1 = report.get(cls, {}).get("f1-score", 0)
         delta = test_f1 - train_f1
         print(f"{cls:<10} {train_f1:>10.4f} {test_f1:>10.4f} {delta:>+10.4f}")
+
+
+def _apply_abstain_policy(run_dir, proba, y_true, le, meta) -> dict | None:
+    """Apply the trained max-softmax-prob gate to the test predictions and report
+    coverage / covered accuracy, plus how second-season SOJA fares under the gate."""
+    policy_path = os.path.join(run_dir, "abstain_policy.json")
+    if not os.path.exists(policy_path):
+        logger.info("No abstain_policy.json in run — skipping abstain evaluation")
+        return None
+    with open(policy_path) as f:
+        policy = json.load(f)
+    t = policy["threshold"]
+
+    conf = proba.max(axis=1)
+    pred = proba.argmax(axis=1)
+    covered = conf >= t
+    correct = pred == y_true
+
+    coverage = float(covered.mean())
+    covered_acc = float(correct[covered].mean()) if covered.any() else None
+
+    ss = meta["is_soja_second_season"].to_numpy()
+    name_true = np.array(le.classes_)[y_true]
+    name_pred = np.array(le.classes_)[pred]
+    ss_covered = ss & covered
+    ss_recall_covered = (
+        float((name_pred[ss_covered] == "SOJA").mean()) if ss_covered.any() else None
+    )
+
+    out = {
+        "threshold": t,
+        "abstain_label": ABSTAIN_LABEL,
+        "coverage": round(coverage, 4),
+        "covered_accuracy": None if covered_acc is None else round(covered_acc, 4),
+        "n_abstained": int((~covered).sum()),
+        "second_season_soja_total": int(ss.sum()),
+        "second_season_soja_abstained": int((ss & ~covered).sum()),
+        "second_season_soja_recall_covered":
+            None if ss_recall_covered is None else round(ss_recall_covered, 4),
+    }
+    logger.info("── Abstain policy applied to TEST (t=%.2f) ──", t)
+    logger.info("  coverage=%.1f%% | covered acc=%s | abstained=%d",
+                coverage * 100, _fmt(covered_acc), out["n_abstained"])
+    logger.info("  2nd-season SOJA: %d total, %d abstained, covered recall=%s",
+                out["second_season_soja_total"], out["second_season_soja_abstained"],
+                _fmt(ss_recall_covered))
+    return out
+
+
+def _fmt(v):
+    return "n/a" if v is None else f"{v:.3f}"
 
 
 # ── Plots ────────────────────────────────────────────────────────────────────
@@ -290,10 +395,10 @@ def _plot_confusion_matrix(cm: np.ndarray, class_names, output_dir: str):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Evaluate trained model on held-out test KMLs")
+    parser = argparse.ArgumentParser(description="Evaluate trained v6 model on held-out test KMLs")
     parser.add_argument(
         "--run-dir", type=str, required=True,
-        help="Training run directory (e.g. src/model/runs/20260528_130117)",
+        help="Training run directory (e.g. src/model/runs_v6/20260620_055235_aug_febmar)",
     )
     parser.add_argument(
         "--test-kml-dir", type=str,
@@ -301,7 +406,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--test-features-dir", type=str,
-        default=os.path.join("src", "data", "features_test"),
+        default=os.path.join("src", "data", "features_test_v5"),
     )
     parser.add_argument("--skip-extraction", action="store_true",
                         help="Skip feature extraction, use existing test features.db")
@@ -309,13 +414,20 @@ if __name__ == "__main__":
                         help="Max KMLs to process per crop (e.g. 50 for a quick sample)")
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--min-stages", type=int, default=3)
+    parser.add_argument("--exclude-field-ids", type=str, default=None,
+                        help="Comma-separated field_ids to drop from the test set "
+                             "(e.g. fields that leaked into training augmentation)")
     args = parser.parse_args()
 
     test_db_path = os.path.join(args.test_features_dir, "features.db")
     eval_output_dir = os.path.join(args.run_dir, "test_eval")
+    exclude_ids = (
+        {s.strip() for s in args.exclude_field_ids.split(",") if s.strip()}
+        if args.exclude_field_ids else None
+    )
 
     if not args.skip_extraction:
-        logger.info("Step 1/2: Extracting features from test KMLs...")
+        logger.info("Step 1/2: Extracting features from test KMLs (v5 pipeline)...")
         extract_test_features(
             args.test_kml_dir, args.test_features_dir,
             args.max_workers, args.max_per_crop,
@@ -329,4 +441,5 @@ if __name__ == "__main__":
         logger.info("Skipping extraction, using existing: %s", test_db_path)
 
     logger.info("Step 2/2: Evaluating model...")
-    evaluate_model(args.run_dir, test_db_path, eval_output_dir, min_stages=args.min_stages)
+    evaluate_model(args.run_dir, test_db_path, eval_output_dir,
+                   min_stages=args.min_stages, exclude_field_ids=exclude_ids)
