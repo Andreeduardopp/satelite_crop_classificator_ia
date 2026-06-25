@@ -12,6 +12,46 @@ near-perfect classifier (see *Why no AVEIA* below).
 
 ---
 
+## How it was built — training, pipeline & data
+
+### Training script
+- **`src/model/train_xgboost_v6.py`** — the v6 trainer, built around the second-season
+  ("safrinha") SOJA fix. Invoked here as `--preset fix --trials 0 --exclude-crops AVEIA`.
+- Model: **XGBoost** (`multi:softprob`, hist tree method), 5-fold weighted stratified
+  out-of-fold CV. `--trials 0` = default hyperparameters (no Optuna; tuning was tested and
+  did not help — see the sibling 7-crop notes).
+- Feature engineering happens inside this script: the raw per-stage index statistics from the
+  DB are expanded into **808 features** (stage-to-stage deltas, peak stage/value/amplitude,
+  green-up & senescence rates, cross-index ratios, C3-legume-vs-C4-grass discriminators,
+  null indicators, cyclic planting-date sin/cos), then **484** are kept by gain ranking.
+
+### Feature pipeline (how the data was generated)
+- **`src/pipelines/phenology_feature_pipeline_v5.py`** built the feature database from KML
+  field polygons, calling **Sentinel Hub** through `src/data_ingestion/request_sentinel_v1.py`.
+- Sources: **Sentinel-2 L2A** (optical, Statistical/Process API) and **Sentinel-1 GRD**
+  (SAR, GAMMA0 terrain-corrected). Per field, each index is aggregated over **6
+  crop-specific phenological stages** (baseline → emergence → vegetative → flowering →
+  grain_fill → maturity), windowed relative to the planting date.
+- Per-stage statistics: `mean, median, std, p10, p90` for **8 optical indices**
+  (NDVI, NDWI, EVI, NDRE, CIRE, MTCI, PSRI, NDMI) and **4 SAR indices** (VV, VH, CR, RVI).
+  The pipeline also does multi-temporal cloud compositing, adaptive cloud-retry windows,
+  and null-stage interpolation from neighbouring stages.
+
+### Data
+| | Source | Size |
+|---|---|---|
+| **Training DB** | `src/data/features_v5/features.db` | 6,374 fields × 7 crops; **5,169** used after excluding AVEIA and requiring `stages_covered >= 3` |
+| Training KMLs | `src/data/dataset_split/train` + `src/data/aug_ss_soja_febmar` (Feb–Mar SOJA augmentation) | — |
+| **Test DB** | `src/data/features_test_v5/features.db` | 1,416 fields (~200/crop); **1,214** scored after dropping AVEIA |
+| Test KMLs | `src/data/dataset_split/test` | held out from training (one leaked SOJA field excluded) |
+
+Both DBs were extracted with the **same v5 pipeline**, so train and test feature spaces match.
+Training crop counts (pre-exclusion): MILHO 1200, AVEIA 1200, TRIGO 1057, FEIJAO 1016,
+SOJA 777, ARROZ 637, CAFE 487. (DBs are git-ignored under `*/data/` — regenerate via the
+pipeline; see *Reproduce*.)
+
+---
+
 ## Results
 
 ### Held-out test (the number that matters)

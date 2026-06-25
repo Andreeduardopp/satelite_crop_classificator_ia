@@ -35,7 +35,22 @@ logging.basicConfig(
 
 STAGES = ["baseline", "emergence", "vegetative", "flowering", "grain_fill", "maturity"]
 
-OPTICAL_INDICES = ["NDVI", "NDWI", "EVI"]
+# Optical index -> evalscript output id (lowercase). Beyond the broadband trio,
+# red-edge indices (NDRE, CIRE, MTCI) track chlorophyll/LAI without the NDVI
+# saturation that makes spectrally-similar cereals (AVEIA vs TRIGO) inseparable;
+# PSRI captures senescence timing and NDMI canopy-water/drydown signal.
+OPTICAL_INDEX_KEYS = {
+    "NDVI": "ndvi",
+    "NDWI": "ndwi",
+    "EVI":  "evi",
+    "NDRE": "ndre",
+    "CIRE": "cire",
+    "MTCI": "mtci",
+    "PSRI": "psri",
+    "NDMI": "ndmi",
+}
+OPTICAL_INDICES = list(OPTICAL_INDEX_KEYS)
+# Indices that are unbounded ratios; clamped server-side, so no Python clip needed.
 STATS = ["mean", "median", "std", "p10", "p90"]
 
 SAR_INDICES = ["VV", "VH", "CR", "RVI"]
@@ -90,6 +105,17 @@ SAR_FEATURE_COLS = [
 ]
 
 ALL_COLS = FIXED_COLS + OPTICAL_FEATURE_COLS + SAR_FEATURE_COLS
+
+# Indices added after the original NDVI/NDWI/EVI set. The 'backfill-optical' mode
+# populates only these columns for existing rows — it does not re-fetch SAR or
+# rewrite the original optical indices.
+BACKFILL_OPTICAL_INDICES = ["NDRE", "CIRE", "MTCI", "PSRI", "NDMI"]
+BACKFILL_OPTICAL_FEATURE_COLS = [
+    f"{idx}_{stat}_{stage}"
+    for idx in BACKFILL_OPTICAL_INDICES
+    for stage in STAGES
+    for stat in STATS
+]
 
 CROP_STAGE_WINDOWS = {
     "SOJA": {
@@ -179,37 +205,50 @@ EVALSCRIPT_PROCESS = """
 //VERSION=3
 function setup() {
     return {
-        input: ["B02", "B03", "B04", "B08", "B11", "SCL", "dataMask"],
+        input: ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "SCL", "dataMask"],
         output: [
             { id: "ndvi_tiff", bands: 1, sampleType: "FLOAT32" },
             { id: "evi_tiff",  bands: 1, sampleType: "FLOAT32" },
             { id: "ndwi_tiff", bands: 1, sampleType: "FLOAT32" },
+            { id: "ndre_tiff", bands: 1, sampleType: "FLOAT32" },
+            { id: "cire_tiff", bands: 1, sampleType: "FLOAT32" },
+            { id: "mtci_tiff", bands: 1, sampleType: "FLOAT32" },
+            { id: "psri_tiff", bands: 1, sampleType: "FLOAT32" },
+            { id: "ndmi_tiff", bands: 1, sampleType: "FLOAT32" },
             { id: "scl_tiff",  bands: 1, sampleType: "UINT8" }
         ]
     };
 }
 
+function safeDiv(a, b) { return (b === 0.0) ? 0.0 : a / b; }
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+
 function evaluatePixel(sample) {
     if (sample.dataMask === 0) {
         return {
-            ndvi_tiff: [NaN],
-            evi_tiff:  [NaN],
-            ndwi_tiff: [NaN],
-            scl_tiff:  [0]
+            ndvi_tiff: [NaN], evi_tiff: [NaN], ndwi_tiff: [NaN],
+            ndre_tiff: [NaN], cire_tiff: [NaN], mtci_tiff: [NaN],
+            psri_tiff: [NaN], ndmi_tiff: [NaN], scl_tiff: [0]
         };
     }
 
     let ndvi = index(sample.B08, sample.B04);
     let ndwi = index(sample.B03, sample.B08);
+    let ndre = index(sample.B8A, sample.B05);   // red-edge chlorophyll
+    let ndmi = index(sample.B08, sample.B11);   // canopy water / drydown
 
     let denom = sample.B08 + 6.0 * sample.B04 - 7.5 * sample.B02 + 1.0;
-    let evi = (denom === 0) ? 0 : 2.5 * (sample.B08 - sample.B04) / denom;
+    let evi = (denom === 0.0) ? 0.0 : 2.5 * (sample.B08 - sample.B04) / denom;
+
+    let cire = clamp(safeDiv(sample.B07, sample.B05) - 1.0, -1.0, 20.0);             // chlorophyll index red-edge
+    let mtci = clamp(safeDiv(sample.B06 - sample.B05, sample.B05 - sample.B04), -10.0, 20.0);  // MERIS terrestrial chlorophyll
+    let psri = clamp(safeDiv(sample.B04 - sample.B02, sample.B06), -2.0, 2.0);       // plant senescence reflectance
 
     return {
-        ndvi_tiff: [ndvi],
-        evi_tiff:  [evi],
-        ndwi_tiff: [ndwi],
-        scl_tiff:  [Math.round(sample.SCL)]
+        ndvi_tiff: [ndvi], evi_tiff: [evi], ndwi_tiff: [ndwi],
+        ndre_tiff: [ndre], cire_tiff: [cire], mtci_tiff: [mtci],
+        psri_tiff: [psri], ndmi_tiff: [ndmi],
+        scl_tiff: [Math.round(sample.SCL)]
     };
 }
 """.strip()
@@ -218,15 +257,23 @@ EVALSCRIPT_OPTICAL_STATS = """
 //VERSION=3
 function setup() {
     return {
-        input: ["B02", "B03", "B04", "B08", "B11", "SCL", "dataMask"],
+        input: ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "SCL", "dataMask"],
         output: [
             { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
             { id: "evi",  bands: 1, sampleType: "FLOAT32" },
             { id: "ndwi", bands: 1, sampleType: "FLOAT32" },
+            { id: "ndre", bands: 1, sampleType: "FLOAT32" },
+            { id: "cire", bands: 1, sampleType: "FLOAT32" },
+            { id: "mtci", bands: 1, sampleType: "FLOAT32" },
+            { id: "psri", bands: 1, sampleType: "FLOAT32" },
+            { id: "ndmi", bands: 1, sampleType: "FLOAT32" },
             { id: "dataMask", bands: 1 }
         ]
     };
 }
+
+function safeDiv(a, b) { return (b === 0.0) ? 0.0 : a / b; }
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 
 function evaluatePixel(sample) {
     var scl = sample.SCL;
@@ -235,14 +282,20 @@ function evaluatePixel(sample) {
 
     var ndvi = index(sample.B08, sample.B04);
     var ndwi = index(sample.B03, sample.B08);
+    var ndre = index(sample.B8A, sample.B05);   // red-edge chlorophyll
+    var ndmi = index(sample.B08, sample.B11);   // canopy water / drydown
 
     var denom = sample.B08 + 6.0 * sample.B04 - 7.5 * sample.B02 + 1.0;
-    var evi = (denom === 0) ? 0 : 2.5 * (sample.B08 - sample.B04) / denom;
+    var evi = (denom === 0.0) ? 0.0 : 2.5 * (sample.B08 - sample.B04) / denom;
+
+    var cire = clamp(safeDiv(sample.B07, sample.B05) - 1.0, -1.0, 20.0);             // chlorophyll index red-edge
+    var mtci = clamp(safeDiv(sample.B06 - sample.B05, sample.B05 - sample.B04), -10.0, 20.0);  // MERIS terrestrial chlorophyll
+    var psri = clamp(safeDiv(sample.B04 - sample.B02, sample.B06), -2.0, 2.0);       // plant senescence reflectance
 
     return {
-        ndvi: [ndvi],
-        evi:  [evi],
-        ndwi: [ndwi],
+        ndvi: [ndvi], evi: [evi], ndwi: [ndwi],
+        ndre: [ndre], cire: [cire], mtci: [mtci],
+        psri: [psri], ndmi: [ndmi],
         dataMask: [mask]
     };
 }
@@ -495,6 +548,11 @@ class PhenologyFeaturePipeline:
                     {"identifier": "ndvi_tiff", "format": {"type": "image/tiff"}},
                     {"identifier": "evi_tiff",  "format": {"type": "image/tiff"}},
                     {"identifier": "ndwi_tiff", "format": {"type": "image/tiff"}},
+                    {"identifier": "ndre_tiff", "format": {"type": "image/tiff"}},
+                    {"identifier": "cire_tiff", "format": {"type": "image/tiff"}},
+                    {"identifier": "mtci_tiff", "format": {"type": "image/tiff"}},
+                    {"identifier": "psri_tiff", "format": {"type": "image/tiff"}},
+                    {"identifier": "ndmi_tiff", "format": {"type": "image/tiff"}},
                     {"identifier": "scl_tiff",  "format": {"type": "image/tiff"}},
                 ],
             },
@@ -548,8 +606,13 @@ class PhenologyFeaturePipeline:
         usable_pct = usable_px / total_px if total_px > 0 else 0.0
 
         features = {}
-        for idx_name, rk in [("NDVI", "ndvi"), ("NDWI", "ndwi"), ("EVI", "evi")]:
-            arr = rasters[rk].astype(np.float32)
+        for idx_name, rk in OPTICAL_INDEX_KEYS.items():
+            arr_src = rasters.get(rk)
+            if arr_src is None:
+                for stat_name in STATS:
+                    features[f"{idx_name}_{stat_name}"] = np.nan
+                continue
+            arr = arr_src.astype(np.float32)
             if idx_name == "EVI":
                 arr = np.clip(arr, -1.0, 1.0)
             valid = arr[clear_mask & ~np.isnan(arr)]
@@ -707,7 +770,7 @@ class PhenologyFeaturePipeline:
             bin_total_samples = 0
             bin_total_nodata = 0
 
-            for idx_name, key in [("NDVI", "ndvi"), ("NDWI", "ndwi"), ("EVI", "evi")]:
+            for idx_name, key in OPTICAL_INDEX_KEYS.items():
                 stats = (
                     outputs.get(key, {})
                     .get("bands", {})
@@ -1004,11 +1067,13 @@ class PhenologyFeaturePipeline:
                             field_meta["field_id"], stage_name,
                         )
                         os.makedirs(tiff_dir, exist_ok=True)
-                        for k in ("ndvi", "evi", "ndwi"):
-                            tifffile.imwrite(
-                                os.path.join(tiff_dir, f"{k}.tif"),
-                                rasters[k].astype(np.float32),
-                            )
+                        for k in OPTICAL_INDEX_KEYS.values():
+                            arr = rasters.get(k)
+                            if arr is not None:
+                                tifffile.imwrite(
+                                    os.path.join(tiff_dir, f"{k}.tif"),
+                                    arr.astype(np.float32),
+                                )
                     result = self._compute_features_from_rasters(rasters)
 
             if result is None:
@@ -1231,6 +1296,7 @@ class PhenologyFeaturePipeline:
                 dtype = "TEXT" if col in TEXT_COLS else "REAL"
                 cols_def.append(f'"{col}" {dtype}')
             cols_def.append('"sar_backfill_done" INTEGER DEFAULT 0')
+            cols_def.append('"optical_backfill_done" INTEGER DEFAULT 0')
             conn.execute(
                 f"CREATE TABLE IF NOT EXISTS phenology_features ({', '.join(cols_def)})"
             )
@@ -1246,6 +1312,10 @@ class PhenologyFeaturePipeline:
         if "sar_backfill_done" not in existing_cols:
             conn.execute('ALTER TABLE phenology_features ADD COLUMN "sar_backfill_done" INTEGER DEFAULT 0')
             logger.info("Migrated: added column 'sar_backfill_done'")
+
+        if "optical_backfill_done" not in existing_cols:
+            conn.execute('ALTER TABLE phenology_features ADD COLUMN "optical_backfill_done" INTEGER DEFAULT 0')
+            logger.info("Migrated: added column 'optical_backfill_done'")
 
         conn.commit()
         return conn
@@ -1510,6 +1580,145 @@ class PhenologyFeaturePipeline:
         conn.close()
         logger.info("SAR backfill complete -- %d updated, %d skipped (no KML)", updated, skipped)
 
+    # -- Optical Backfill -----------------------------------------------------
+
+    def backfill_optical(self, kml_root: str):
+        """
+        Populate the red-edge / SWIR optical indices (BACKFILL_OPTICAL_INDICES)
+        for existing rows.
+
+        Unlike a full re-run this does NOT re-fetch SAR and does NOT overwrite
+        the original NDVI/NDWI/EVI values — it issues one Sentinel-2 request per
+        field x stage and writes only the new index columns. Rows are matched on
+        a null first new-index column and a not-yet-attempted flag, mirroring the
+        SAR backfill.
+        """
+        db_path = os.path.join(self.output_dir, "features.db")
+        conn = self._init_db(db_path)
+
+        first_col = f"{BACKFILL_OPTICAL_INDICES[0]}_mean_{STAGES[0]}"
+        rows = conn.execute(
+            f'SELECT rowid, field_id, crop_label, planting_date '
+            f'FROM phenology_features '
+            f'WHERE "{first_col}" IS NULL '
+            f'AND (optical_backfill_done IS NULL OR optical_backfill_done = 0)'
+        ).fetchall()
+
+        if not rows:
+            logger.info("No rows need optical backfill -- all populated or already attempted")
+            conn.close()
+            return
+
+        logger.info("Optical backfill: %d rows to process", len(rows))
+
+        kml_index = {}
+        for dirpath, _, filenames in os.walk(kml_root):
+            for fn in filenames:
+                if fn.lower().endswith(".kml"):
+                    meta = parse_metadata_from_filename(fn)
+                    if meta:
+                        kml_index[meta["field_id"]] = os.path.join(dirpath, fn)
+
+        logger.info("KML index: %d files", len(kml_index))
+
+        update_sql = (
+            "UPDATE phenology_features SET "
+            + ", ".join([f'"{c}" = ?' for c in BACKFILL_OPTICAL_FEATURE_COLS])
+            + ', "optical_backfill_done" = 1'
+            + " WHERE rowid = ?"
+        )
+
+        updated = 0
+        skipped = 0
+
+        for i, (rowid, field_id, crop_label, planting_date_str) in enumerate(rows, 1):
+            kml_path = kml_index.get(field_id)
+            if kml_path is None:
+                skipped += 1
+                continue
+
+            coords = parse_kml_polygon(kml_path)
+            if coords is None:
+                skipped += 1
+                continue
+
+            planting_date = datetime.strptime(planting_date_str, "%Y-%m-%d")
+            stage_windows = CROP_STAGE_WINDOWS.get(crop_label, DEFAULT_STAGE_WINDOWS)
+            width, height = self._compute_resolution(coords)
+            field_meta = {"field_id": field_id, "crop_label": crop_label}
+
+            logger.info(
+                "[%d/%d] optical backfill: %s | %s",
+                i, len(rows), field_id, crop_label,
+            )
+
+            new_feats = {}
+            any_data = False
+
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                futures = {
+                    pool.submit(
+                        self._fetch_optical_with_retry,
+                        coords, stage_windows[sn][0], stage_windows[sn][1],
+                        planting_date, width, height, False, sn, field_meta,
+                    ): sn
+                    for sn in STAGES
+                }
+
+                for future in as_completed(futures):
+                    stage_name = futures[future]
+                    try:
+                        feats, usable_pct = future.result()
+                    except Exception as e:
+                        logger.warning("    %s: exception -- %s", stage_name, e)
+                        feats = None
+
+                    stage_has = False
+                    if feats is not None:
+                        for idx in BACKFILL_OPTICAL_INDICES:
+                            v = feats.get(f"{idx}_mean")
+                            try:
+                                if v is not None and not math.isnan(float(v)):
+                                    stage_has = True
+                                    break
+                            except (TypeError, ValueError):
+                                pass
+
+                    if stage_has:
+                        for idx in BACKFILL_OPTICAL_INDICES:
+                            for stat in STATS:
+                                new_feats[f"{idx}_{stat}_{stage_name}"] = feats.get(f"{idx}_{stat}")
+                        any_data = True
+                        logger.info("    %s: optical OK (%.0f%%)", stage_name, usable_pct * 100)
+                    else:
+                        for idx in BACKFILL_OPTICAL_INDICES:
+                            for stat in STATS:
+                                new_feats[f"{idx}_{stat}_{stage_name}"] = np.nan
+                        logger.info("    %s: optical no data", stage_name)
+
+            values = []
+            for col in BACKFILL_OPTICAL_FEATURE_COLS:
+                v = new_feats.get(col)
+                if v is None:
+                    values.append(None)
+                else:
+                    try:
+                        f = float(v)
+                        values.append(None if math.isnan(f) else f)
+                    except (TypeError, ValueError):
+                        values.append(None)
+            values.append(rowid)
+
+            conn.execute(update_sql, values)
+            conn.commit()
+            updated += 1
+
+            logger.info("  -> optical %s", "written" if any_data else "no data (marked done, won't retry)")
+            time.sleep(self.request_delay)
+
+        conn.close()
+        logger.info("Optical backfill complete -- %d updated, %d skipped (no KML)", updated, skipped)
+
 
 # -- Entry point ---------------------------------------------------------------
 
@@ -1522,9 +1731,11 @@ if __name__ == "__main__":
             "adaptive cloud-retry windows (B), and null-stage interpolation (C)."
         )
     )
-    parser.add_argument("--mode", choices=["full", "backfill-sar"], default="full",
+    parser.add_argument("--mode", choices=["full", "backfill-sar", "backfill-optical"], default="full",
                         help="'full' = process new KMLs (optical+SAR), "
-                             "'backfill-sar' = add SAR to existing rows with expanded windows")
+                             "'backfill-sar' = add SAR to existing rows with expanded windows, "
+                             "'backfill-optical' = add red-edge/SWIR indices (NDRE/CIRE/MTCI/PSRI/NDMI) "
+                             "to existing rows without re-fetching SAR")
     parser.add_argument("--max-per-crop", type=int, default=500)
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--year", type=int, default=None,
@@ -1551,6 +1762,8 @@ if __name__ == "__main__":
 
     if args.mode == "backfill-sar":
         pipeline.backfill_sar(kml_root)
+    elif args.mode == "backfill-optical":
+        pipeline.backfill_optical(kml_root)
     else:
         df = pipeline.process_directory(
             root_dir=kml_root,
@@ -1568,9 +1781,10 @@ if __name__ == "__main__":
             print(f"\nFields with >= 1 interpolated stage: {interp_any.sum()} / {len(df)}")
 
             print(f"\nNull rate per stage (optical, after interpolation):")
+            optical_prefixes = tuple(f"{idx}_" for idx in OPTICAL_INDICES)
             for stage in STAGES:
                 stage_cols = [c for c in df.columns
-                              if c.endswith(f"_{stage}") and c.startswith(("NDVI_", "NDWI_", "EVI_"))]
+                              if c.endswith(f"_{stage}") and c.startswith(optical_prefixes)]
                 if stage_cols:
                     null_rate = df[stage_cols].isna().all(axis=1).mean()
                     print(f"  {stage}: {null_rate:.0%} fields fully null")
