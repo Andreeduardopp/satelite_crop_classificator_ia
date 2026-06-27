@@ -791,6 +791,8 @@ if __name__ == "__main__":
                         help="Drop all SAR (VV/VH/CR/RVI) features and their null-indicators "
                              "(A/B diagnostic for SAR-missingness shortcut)")
     parser.add_argument("--tag", default=None, help="Suffix for the run folder name")
+    parser.add_argument("--runs-dir", default=os.path.join("src", "model", "runs_v6"),
+                        help="Parent directory for the run folder (default: src/model/runs_v6)")
 
     parser.add_argument("--preset", choices=list(PRESETS), default="fix",
                         help="fix (B+C+E, default) | ablate-date (A diagnostic) | baseline (~v5)")
@@ -817,7 +819,7 @@ if __name__ == "__main__":
 
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     tag = args.tag or args.preset
-    output_dir = os.path.join("src", "model", "runs_v6", f"{run_ts}_{tag}")
+    output_dir = os.path.join(args.runs_dir, f"{run_ts}_{tag}")
 
     X, y, feature_names, le, meta = load_data(
         args.db, min_stages=args.min_stages, planting_year=args.year,

@@ -1,0 +1,72 @@
+{
+  "timestamp": "2026-06-26T14:28:41.984092",
+  "train_run": "src/model/runs_v7/20260626_141339_5culturas_benchmark",
+  "n_test_samples": 1016,
+  "n_features": 484,
+  "accuracy": 0.8858,
+  "f1_macro": 0.8842,
+  "f1_weighted": 0.8855,
+  "null_rate": 0.0579,
+  "season_diagnostic": {
+    "soja_total": 216,
+    "soja_main_season": 200,
+    "soja_second_season": 16,
+    "soja_main_recall": 0.985,
+    "soja_second_season_recall": 0.875,
+    "soja_to_milho": 2,
+    "milho_to_soja": 3,
+    "second_season_soja_to_milho": 0
+  },
+  "abstain": {
+    "threshold": 0.8,
+    "abstain_label": "NAO_CLASSIFICAVEL",
+    "coverage": 0.7953,
+    "covered_accuracy": 0.9542,
+    "n_abstained": 208,
+    "second_season_soja_total": 16,
+    "second_season_soja_abstained": 5,
+    "second_season_soja_recall_covered": 1.0
+  },
+  "per_class": {
+    "AVEIA": {
+      "precision": 0.7523,
+      "recall": 0.82,
+      "f1": 0.7847,
+      "support": 200
+    },
+    "FEIJAO": {
+      "precision": 0.9409,
+      "recall": 0.955,
+      "f1": 0.9479,
+      "support": 200
+    },
+    "MILHO": {
+      "precision": 0.9793,
+      "recall": 0.945,
+      "f1": 0.9618,
+      "support": 200
+    },
+    "SOJA": {
+      "precision": 0.9548,
+      "recall": 0.9769,
+      "f1": 0.9657,
+      "support": 216
+    },
+    "TRIGO": {
+      "precision": 0.8011,
+      "recall": 0.725,
+      "f1": 0.7612,
+      "support": 200
+    }
+  },
+  "train_vs_test": {
+    "train_accuracy": 0.8635,
+    "test_accuracy": 0.8858,
+    "train_f1_macro": 0.8668,
+    "test_f1_macro": 0.8842,
+    "overfit_gap_acc": -0.0223,
+    "overfit_gap_f1": -0.0174,
+    "train_second_season_soja_recall": 0.8953488372093024,
+    "test_second_season_soja_recall": 0.875
+  }
+}

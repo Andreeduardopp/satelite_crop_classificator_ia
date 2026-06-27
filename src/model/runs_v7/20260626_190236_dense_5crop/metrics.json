@@ -1,0 +1,172 @@
+{
+  "timestamp": "2026-06-26T19:08:44.473472",
+  "version": "v6",
+  "config": {
+    "date_mode": "cyclic",
+    "class_balance": true,
+    "soja_second_season_weight": 6.0,
+    "second_season_months": [
+      1,
+      2,
+      3
+    ],
+    "abstain": true,
+    "abstain_target_acc": 0.93
+  },
+  "excluded_crops": [],
+  "n_samples": 5021,
+  "n_features_original": 1541,
+  "n_features_selected": 924,
+  "n_classes": 5,
+  "classes": [
+    "AVEIA",
+    "FEIJAO",
+    "MILHO",
+    "SOJA",
+    "TRIGO"
+  ],
+  "cv_folds": 5,
+  "optuna_trials": 0,
+  "accuracy": 0.9327,
+  "f1_macro": 0.9343,
+  "f1_weighted": 0.9326,
+  "null_rate": 0.117,
+  "season_diagnostic": {
+    "soja_total": 683,
+    "soja_main_season": 525,
+    "soja_second_season": 158,
+    "soja_main_recall": 0.979047619047619,
+    "soja_second_season_recall": 0.9113924050632911,
+    "soja_to_milho": 4,
+    "milho_to_soja": 24,
+    "second_season_soja_to_milho": 4
+  },
+  "abstain_policy": {
+    "metric": "max_softmax_probability",
+    "abstain_label": "NAO_CLASSIFICAVEL",
+    "rule": "predict crop only if max class probability >= threshold, else abstain",
+    "target_covered_accuracy": 0.93,
+    "threshold": 0.3,
+    "coverage_at_threshold": 1.0,
+    "covered_accuracy_at_threshold": 0.9327,
+    "soja_milho_accuracy_at_threshold": 0.9515,
+    "sweep": [
+      {
+        "threshold": 0.3,
+        "coverage": 1.0,
+        "covered_accuracy": 0.9327,
+        "soja_milho_accuracy": 0.9515
+      },
+      {
+        "threshold": 0.35,
+        "coverage": 1.0,
+        "covered_accuracy": 0.9327,
+        "soja_milho_accuracy": 0.9515
+      },
+      {
+        "threshold": 0.4,
+        "coverage": 0.9996,
+        "covered_accuracy": 0.9327,
+        "soja_milho_accuracy": 0.9515
+      },
+      {
+        "threshold": 0.45,
+        "coverage": 0.999,
+        "covered_accuracy": 0.9332,
+        "soja_milho_accuracy": 0.9525
+      },
+      {
+        "threshold": 0.5,
+        "coverage": 0.9964,
+        "covered_accuracy": 0.9346,
+        "soja_milho_accuracy": 0.9535
+      },
+      {
+        "threshold": 0.55,
+        "coverage": 0.9791,
+        "covered_accuracy": 0.9416,
+        "soja_milho_accuracy": 0.959
+      },
+      {
+        "threshold": 0.6,
+        "coverage": 0.9643,
+        "covered_accuracy": 0.9469,
+        "soja_milho_accuracy": 0.9615
+      },
+      {
+        "threshold": 0.65,
+        "coverage": 0.9492,
+        "covered_accuracy": 0.9515,
+        "soja_milho_accuracy": 0.9629
+      },
+      {
+        "threshold": 0.7,
+        "coverage": 0.9281,
+        "covered_accuracy": 0.9584,
+        "soja_milho_accuracy": 0.9654
+      },
+      {
+        "threshold": 0.75,
+        "coverage": 0.9084,
+        "covered_accuracy": 0.9638,
+        "soja_milho_accuracy": 0.9696
+      },
+      {
+        "threshold": 0.8,
+        "coverage": 0.8857,
+        "covered_accuracy": 0.9692,
+        "soja_milho_accuracy": 0.9726
+      },
+      {
+        "threshold": 0.85,
+        "coverage": 0.852,
+        "covered_accuracy": 0.9762,
+        "soja_milho_accuracy": 0.9798
+      },
+      {
+        "threshold": 0.9,
+        "coverage": 0.8066,
+        "covered_accuracy": 0.9822,
+        "soja_milho_accuracy": 0.9817
+      },
+      {
+        "threshold": 0.95,
+        "coverage": 0.7305,
+        "covered_accuracy": 0.9899,
+        "soja_milho_accuracy": 0.9895
+      }
+    ]
+  },
+  "per_class": {
+    "AVEIA": {
+      "precision": 0.8892,
+      "recall": 0.8946,
+      "f1": 0.8919,
+      "support": 1148
+    },
+    "FEIJAO": {
+      "precision": 0.9567,
+      "recall": 0.9861,
+      "f1": 0.9712,
+      "support": 1009
+    },
+    "MILHO": {
+      "precision": 0.9875,
+      "recall": 0.9618,
+      "f1": 0.9745,
+      "support": 1151
+    },
+    "SOJA": {
+      "precision": 0.9495,
+      "recall": 0.9634,
+      "f1": 0.9564,
+      "support": 683
+    },
+    "TRIGO": {
+      "precision": 0.8854,
+      "recall": 0.8699,
+      "f1": 0.8776,
+      "support": 1030
+    }
+  }
+}
