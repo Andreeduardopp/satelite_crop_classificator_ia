@@ -9,9 +9,17 @@ Two levers remain to push the pair further. **Option 1 is the recommended next s
 
 ---
 
-## Option 1 — Engineered dense-timing features  *(recommended first)*
+## Option 1 — Engineered dense-timing features  *(TESTED → negative, do not ship)*
 
-### Idea
+> **Result (2026-06-27):** built `features_v7_dense.py` (+163 timing features) and tested
+> two ways. Matched 800-field probe: raw bins 0.8937 AUC vs raw+timing 0.8903 (**−0.0034**).
+> Full 5-class retrain: raw 0.9256 acc / 52 swaps vs +timing 0.9236 acc / 53 swaps. **No
+> gain — slightly worse.** The raw dense bins already let the trees extract the
+> senescence-timing offset directly; explicit descriptors are redundant and dilute gain
+> selection. Code kept (toggle: `train_xgboost_v7.py --dense-timing`) as a documented
+> negative result. Lesson: on the dense grid, *raw bins > hand-engineered shape features*.
+
+### Idea (the hypothesis — which did not hold)
 v7 feeds XGBoost the **raw** dekadal (`*_d{k}`) and fine (`*_f{k}`) bins. Trees can
 threshold individual time points, but they don't get the *shape* of the curve handed to
 them explicitly. Oats and wheat differ mainly in **when** they head and senesce — a timing
@@ -79,13 +87,15 @@ indices. That orthogonality is why it could add beyond the 0.87 optical ceiling.
 
 ---
 
-## Recommendation
+## Recommendation (updated 2026-06-27)
 
-1. **Do Option 1 first** — free, fast, directly extends the proven dense result.
-2. If AVEIA/TRIGO is still short of target, **de-risk Option 2** on the matched pilot
-   (`features_v6_matched/`) before committing to a SAR re-extraction.
-3. Whatever the residual, keep the **abstain gate** as the honest fallback for the
-   genuinely ambiguous oats/wheat overlap.
+1. ~~Option 1~~ — **tested, negative** (raw bins already capture it). Closed.
+2. **Option 2 (SAR texture) is now the primary remaining lever** — an *orthogonal*
+   (structural, not spectral) signal, so it's not subject to the "raw bins already have it"
+   redundancy that killed Option 1. De-risk on the matched pilot (`features_v6_matched/`)
+   before any SAR re-extraction.
+3. Keep the **abstain gate** as the honest fallback for the genuinely ambiguous oats/wheat
+   overlap (the ~0.9 pair-AUC ceiling suggests a residual that no feature will fully remove).
 
 Anti-levers (don't bother): more cross-index red-edge ratios (2 % gain), date features
 (1 %), Optuna tuning (lost on every sibling model).

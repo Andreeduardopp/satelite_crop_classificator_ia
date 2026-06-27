@@ -44,7 +44,7 @@ NON_FEATURE = {"field_id", "crop_label", "planting_date", "interpolated",
                "dekads_covered", "fine_covered"}
 
 
-def _load(db_path, exclude_crops=None, min_cov=3, second_season_months=None):
+def _load(db_path, exclude_crops=None, min_cov=3, second_season_months=None, dense_timing=False):
     months = second_season_months or DEFAULT_SECOND_SEASON_MONTHS
     df = pd.read_sql("SELECT * FROM phenology_features", sqlite3.connect(db_path))
     if exclude_crops:
@@ -53,6 +53,9 @@ def _load(db_path, exclude_crops=None, min_cov=3, second_season_months=None):
     for c in df.columns:
         if c not in {"field_id", "crop_label", "planting_date", "interpolated"}:
             df[c] = pd.to_numeric(df[c], errors="coerce")
+    if dense_timing:
+        from features_v7_dense import add_dense_timing_features
+        df = add_dense_timing_features(df)
 
     pdate = pd.to_datetime(df["planting_date"], errors="coerce")
     df = df[pdate.notna()].reset_index(drop=True)
@@ -83,14 +86,15 @@ def _load(db_path, exclude_crops=None, min_cov=3, second_season_months=None):
     return X, y, list(X.columns), le, meta
 
 
-def evaluate(run_dir, test_db, exclude_crops=None, min_cov=3):
+def evaluate(run_dir, test_db, exclude_crops=None, min_cov=3, dense_timing=False):
     """Apply the trained v7 model to a dense test DB; report metrics + AVEIA/TRIGO confusion."""
     with open(os.path.join(run_dir, "metrics.json")) as f:
         classes = json.load(f)["classes"]
     with open(os.path.join(run_dir, "selected_features.json")) as f:
         sel = json.load(f)
 
-    X, y, feats, le, meta = _load(test_db, exclude_crops=exclude_crops, min_cov=min_cov)
+    X, y, feats, le, meta = _load(test_db, exclude_crops=exclude_crops, min_cov=min_cov,
+                                  dense_timing=dense_timing)
     le = LabelEncoder(); le.classes_ = np.array(classes)
     known = meta["crop_label"].isin(classes).to_numpy()
     if not known.all():
@@ -143,13 +147,16 @@ if __name__ == "__main__":
     ap.add_argument("--soja-ss-weight", type=float, default=6.0)
     ap.add_argument("--runs-dir", default=os.path.join("src", "model", "runs_v7"))
     ap.add_argument("--tag", default="dense")
+    ap.add_argument("--dense-timing", action="store_true", default=False,
+                    help="add engineered dense-timing features (Option 1)")
     ap.add_argument("--no-eval", dest="do_eval", action="store_false", default=True)
     args = ap.parse_args()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = os.path.join(args.runs_dir, f"{ts}_{args.tag}")
 
-    X, y, feats, le, meta = _load(args.train_db, exclude_crops=args.exclude_crops, min_cov=args.min_cov)
+    X, y, feats, le, meta = _load(args.train_db, exclude_crops=args.exclude_crops,
+                                  min_cov=args.min_cov, dense_timing=args.dense_timing)
     train_and_evaluate(
         X, y, feats, le, meta,
         n_folds=args.folds, optuna_trials=args.trials, output_dir=out_dir,
@@ -159,4 +166,5 @@ if __name__ == "__main__":
     logger.info("Run output: %s", out_dir)
 
     if args.do_eval and os.path.exists(args.test_db):
-        evaluate(out_dir, args.test_db, exclude_crops=args.exclude_crops, min_cov=args.min_cov)
+        evaluate(out_dir, args.test_db, exclude_crops=args.exclude_crops,
+                 min_cov=args.min_cov, dense_timing=args.dense_timing)

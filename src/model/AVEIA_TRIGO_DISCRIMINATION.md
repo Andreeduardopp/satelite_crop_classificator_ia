@@ -136,8 +136,12 @@ preset `fix`). Held-out test:
 
 No regression on the other crops (FEIJAO 0.95→0.98, SOJA/MILHO ≥0.96); safrinha SOJA recall
 held/improved (0 SOJA→MILHO on test). Model + full writeup:
-`runs_v7/20260626_190236_dense_5crop/README.md`. Raw bins only so far — engineered
-dense-timing features and SAR texture remain as further levers.
+`runs_v7/20260626_190236_dense_5crop/README.md`.
+
+**Follow-up — engineered dense-timing features (Option 1): tested, negative.** Adding 163
+senescence-onset/slope/curvature descriptors on the dense grid gave −0.0034 AUC on the
+matched pair and −0.002 acc on the full model — the raw bins already capture the timing.
+See `V7_NEXT_LEVERS.md`. **SAR texture (Option 2)** is the remaining (orthogonal) lever.
 
 ---
 

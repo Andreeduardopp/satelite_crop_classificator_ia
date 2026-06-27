@@ -19,6 +19,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 from train_xgboost_v6 import engineer_features, add_null_indicators, NON_FEATURE_COLS, TEXT_COLS
+from features_v7_dense import add_dense_timing_features
 
 V6_DB = sys.argv[1] if len(sys.argv) > 1 else "src/data/features_v6_matched/features.db"
 V5_DB = "src/data/features_v5/features.db"
@@ -41,9 +42,11 @@ def _cv(X, y, n_est=400, depth=5):
     return np.mean(aucs), np.std(aucs), np.mean(accs)
 
 
-def load_v6():
+def load_v6(timing=False):
     df = pd.read_sql("SELECT * FROM phenology_features", sqlite3.connect(V6_DB))
     df = df[df["crop_label"].str.upper().isin(PAIR)].reset_index(drop=True)
+    if timing:
+        df = add_dense_timing_features(df)
     feat = [c for c in df.columns if c not in V6_TEXT and c not in GEO_DROP]
     X = df[feat].apply(pd.to_numeric, errors="coerce").astype("float32")
     y = (df["crop_label"].str.upper() == "TRIGO").astype(int).to_numpy()
@@ -65,11 +68,17 @@ def load_v5(field_ids):
 
 
 def main():
-    Xv6, yv6, ids6, feat6 = load_v6()
+    Xv6, yv6, ids6, feat6 = load_v6(timing=False)
     print(f"v6 pilot: {len(yv6)} fields (AVEIA {np.sum(yv6==0)}, TRIGO {np.sum(yv6==1)}), "
           f"{Xv6.shape[1]} dense features")
     auc6, sd6, acc6 = _cv(Xv6, yv6)
-    print(f"  v6 DENSE      : AUC {auc6:.4f} +/-{sd6:.4f}   acc {acc6:.4f}")
+    print(f"  v6 DENSE (raw bins)    : AUC {auc6:.4f} +/-{sd6:.4f}   acc {acc6:.4f}")
+
+    # Option 1: raw bins + engineered dense-timing features
+    Xt, yt, _, featt = load_v6(timing=True)
+    auct, sdt, acct = _cv(Xt, yt)
+    print(f"  v6 DENSE + timing ({Xt.shape[1]-Xv6.shape[1]:+d}f): AUC {auct:.4f} +/-{sdt:.4f}   acc {acct:.4f}")
+    print(f"  -> timing delta: AUC {auct-auc6:+.4f}")
 
     # matched v5 baseline on the same fields
     Xv5, yv5, ids5 = load_v5(ids6)
@@ -77,11 +86,8 @@ def main():
     print(f"\nmatched v5 fields found in features_v5: {n_match}/{len(ids6)}")
     if n_match >= 30:
         auc5, sd5, acc5 = _cv(Xv5, yv5)
-        print(f"  v5 STAGE (same fields): AUC {auc5:.4f} +/-{sd5:.4f}   acc {acc5:.4f}")
-        print(f"\nDelta (v6 dense - v5 stage, matched): AUC {auc6-auc5:+.4f}")
-    else:
-        print("  (too few matched fields for a fair v5 baseline; compare to full-set 0.857)")
-    print(f"\nReference: full-set v5 ceiling = 0.857 AUC. Pilot n is small -> read direction, not decimals.")
+        print(f"  v5 STAGE (same fields) : AUC {auc5:.4f} +/-{sd5:.4f}   acc {acc5:.4f}")
+        print(f"\nDeltas vs v5 stage (matched): raw {auc6-auc5:+.4f} | +timing {auct-auc5:+.4f}")
 
 
 if __name__ == "__main__":
