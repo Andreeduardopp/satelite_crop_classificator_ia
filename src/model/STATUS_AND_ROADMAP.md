@@ -1,25 +1,30 @@
 # Crop Classifier — Status & Roadmap (toward 6 → 7 cultures)
 
-**Last updated:** 2026-06-27
-**Current model:** `runs_v7/20260626_190236_dense_5crop/` — 5 crops, held-out **0.926 acc / 0.926 macro-F1**.
+**Last updated:** 2026-06-28
+**Current model:** `runs_v7/20260628_075718_dense_6crop_arroz/` — 6 crops, held-out **0.941 acc / 0.941 macro-F1**.
 
 ---
 
 ## 1. Where we are
 
-### The model (v7 dense, 5 crops)
-SOJA, MILHO, TRIGO, AVEIA, FEIJAO. Held-out test (968 fields):
+### The model (v7 dense, 6 crops)
+SOJA, MILHO, TRIGO, AVEIA, FEIJAO, **ARROZ**. Held-out test (1,149 fields):
 
-| Culture | Precision | Recall | F1 | vs v6 stage |
+| Culture | Precision | Recall | F1 | vs 5-crop |
 |---|---|---|---|---|
-| FEIJAO | 0.96 | 0.99 | **0.98** | +0.03 |
-| MILHO | 0.99 | 0.93 | **0.96** | ≈0 |
-| SOJA | 0.95 | 0.97 | **0.96** | −0.01 |
-| AVEIA | 0.86 | 0.87 | **0.87** | **+0.09** |
-| TRIGO | 0.87 | 0.86 | **0.87** | **+0.11** |
-| **Overall** | | | **0.926** | **+0.04** |
+| ARROZ | 1.00 | 0.97 | **0.99** | 🆕 |
+| FEIJAO | 0.97 | 1.00 | **0.98** | ≈0 |
+| SOJA | 0.96 | 0.98 | **0.97** | +0.01 |
+| MILHO | 0.98 | 0.95 | **0.96** | ≈0 |
+| AVEIA | 0.87 | 0.89 | **0.88** | +0.01 |
+| TRIGO | 0.89 | 0.86 | **0.87** | ≈0 |
+| **Overall** | | | **0.941** | **+0.015** |
 
-Safrinha (second-season) SOJA recall 0.867, **0 SOJA→MILHO**. AVEIA↔TRIGO swaps 90 → 52.
+Safrinha (second-season) SOJA recall 0.867 (n=15), **0 SOJA→MILHO**. AVEIA↔TRIGO swaps 52 → 47.
+**ARROZ near-solved on arrival** — precision 1.00 (0 false positives on test); only meaningful
+leak is ARROZ→MILHO ~1.8 % (OOF). Carried by the optical water signature (NDMI dominates the
+top features) plus partial SAR (`VV_p10_d9` is the #5 feature overall, so the dekadal SAR null
+didn't sink it). Beats the old stage-based 7-crop 0.910 with one crop still to add.
 
 ### The pipeline (v6 dense)
 `phenology_feature_pipeline_v6.py` — one full-season Statistical-API request per source with
@@ -43,7 +48,7 @@ features) tested **negative** — the raw dense bins already carry the signal. F
 | Dense pipeline | `src/pipelines/phenology_feature_pipeline_v6.py` |
 | v7 trainer | `src/model/train_xgboost_v7.py` (reuses v6 CV/abstain/diagnostic) |
 | Probes | `probe_v6_dense.py` (matched dense vs stage), `probe_aveia_trigo.py` |
-| Data (git-ignored) | `features_v6/` (train 5,250), `features_test_v6/` (test 1,016), `features_v6_matched/` (de-risk pilot) |
+| Data (git-ignored) | `features_v6/` (train 5,887 incl. ARROZ 637), `features_test_v6/` (test 1,216 incl. ARROZ 200), `features_v6_matched/` (de-risk pilot) |
 | Guardrail | abstain gate (`abstain_policy.json`) + season-stratified diagnostic |
 
 ### Known limitations
@@ -64,7 +69,7 @@ features) tested **negative** — the raw dense bins already carry the signal. F
 | FEIJAO | C3 legume, annual | ~90 | ✅ | short cycle (easy) |
 | AVEIA | C3 cereal, annual | ~130 | ✅ | vs TRIGO — senescence timing |
 | TRIGO | C3 cereal, annual | ~135 | ✅ | vs AVEIA — senescence timing |
-| **ARROZ** | C3 grass, **flooded** | ~145 | ❌ | flooding (low SAR + high NDWI early) — **distinctive, fits the grid** |
+| ARROZ | C3 grass, flooded | ~145 | ✅ | flooding (high early NDMI/NDWI + low SAR) — added 2026-06-28, F1 **0.99** |
 | **CAFE** | **perennial, evergreen** | **~270** | ❌ | no annual senescence cycle — easy to separate, **but exceeds the grid** |
 
 For reference, the old **stage-based 7-crop** model scored 0.910 acc with AVEIA/TRIGO as the
@@ -91,15 +96,25 @@ This is why the recommended order is **ARROZ first (6 crops, no pipeline change)
 
 ## 4. Roadmap
 
-### Phase 1 — 6 crops: add ARROZ  *(quick win, no pipeline change)*
-1. Dense-extract ARROZ train + test, matched to `features_v5` / `features_test_v5`:
-   `phenology_feature_pipeline_v6.py --kml-root dataset_split/{train,test} --match-db ... --exclude-crops <all but ARROZ>` into the existing `features_v6` / `features_test_v6`.
-2. Retrain `train_xgboost_v7.py --exclude-crops CAFE` (6 classes), evaluate.
-3. **Expected:** high — rice's flooding signature (low SAR backscatter + high early NDWI/NDMI)
-   is unlike any other crop here. Main thing to watch: ARROZ↔MILHO/other grasses, but the
-   water signal should keep it clean.
-4. De-risk first (optional): a 2-class ARROZ-vs-rest probe on the matched pilot, same pattern
-   as `probe_v6_dense.py`.
+### Phase 1 — 6 crops: add ARROZ  ✅ **DONE 2026-06-28**
+Ran exactly as planned, no pipeline change. Reproduce:
+```
+# train (637 fields, matched to v5) — appends into features_v6
+python src/pipelines/phenology_feature_pipeline_v6.py \
+  --kml-root src/data/dataset_split/train/arquivos_kml_ARROZ \
+  --match-db src/data/features_v5/features.db --output-dir src/data/features_v6
+# test (200 fields) — appends into features_test_v6
+python src/pipelines/phenology_feature_pipeline_v6.py \
+  --kml-root src/data/dataset_split/test/arquivos_kml_ARROZ \
+  --match-db src/data/features_test_v5/features.db --output-dir src/data/features_test_v6
+# retrain 6 classes (v6 has no CAFE, so no exclude needed)
+python src/model/train_xgboost_v7.py --tag dense_6crop_arroz
+```
+**Result:** held-out **0.941 acc / 0.941 macro-F1** (n=1,149); ARROZ F1 **0.99** (P 1.00 / R 0.97).
+The expected ARROZ↔MILHO/grass risk was minimal (≤1.8 % OOF); the SAR-null worry was a
+non-issue (NDMI + `VV_p10_d9` both rank top). Skipped the optional probe — ARROZ's signal was
+clearly strong enough to go straight to the full train. Run: `runs_v7/20260628_075718_dense_6crop_arroz/`.
+*(Used dedicated ARROZ kml-root dirs rather than `--exclude-crops`; trainer needed no `--exclude-crops` since v6 carries no CAFE.)*
 
 ### Phase 2 — 7 crops: add CAFE  *(needs the grid upgrade in §5.1)*
 1. Ship the crop-adaptive grid (§5.1) so the pipeline covers CAFE's full ~270-day cycle.
@@ -154,8 +169,8 @@ monitor MILHO precision and the AVEIA/TRIGO / ARROZ confusions in the field.
 ---
 
 ## 7. Recommended sequence
-1. **ARROZ → 6 crops** (no pipeline change; fast).
-2. **Crop-adaptive grid (§5.1)** — unblocks CAFE and improves everything.
+1. ~~**ARROZ → 6 crops**~~ ✅ **DONE** (0.941, ARROZ F1 0.99).
+2. **Crop-adaptive grid (§5.1)** — unblocks CAFE and improves everything. ← **next**
 3. **CAFE → 7 crops.**
 4. If AVEIA/TRIGO (or a new pair) is still short of target: **SAR texture (§5.2)** and
    **abstain calibration (§5.3)**.

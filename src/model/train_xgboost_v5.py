@@ -10,7 +10,6 @@ import xgboost as xgb
 import optuna
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score
 from sklearn.preprocessing import LabelEncoder
-from sklearn.ensemble import ExtraTreesClassifier, VotingClassifier
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -32,7 +31,10 @@ logging.basicConfig(
 TEXT_COLS = {"field_id", "crop_label", "planting_date"}
 
 STAGES = ["baseline", "emergence", "vegetative", "flowering", "grain_fill", "maturity"]
-INDICES = ["NDVI", "NDWI", "EVI"]
+# Red-edge (NDRE/CIRE/MTCI), senescence (PSRI) and moisture (NDMI) indices added
+# to target the AVEIA<->TRIGO confusion. Engineered features (deltas, peaks,
+# greenup/senescence rates, drydown ratios) are generated for every index here.
+INDICES = ["NDVI", "NDWI", "EVI", "NDRE", "CIRE", "MTCI", "PSRI", "NDMI"]
 SAR_INDICES = ["VV", "VH", "CR", "RVI"]
 STATS_BASE = ["mean", "median", "std", "p10", "p90"]
 
@@ -48,7 +50,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     if "planting_date" in df.columns:
         doy = pd.to_datetime(df["planting_date"], errors="coerce").dt.dayofyear
         df["planting_doy"] = doy
-        # Cyclical encoding so Jan 1 ≈ Dec 31
         df["planting_doy_sin"] = np.sin(2 * np.pi * doy / 365)
         df["planting_doy_cos"] = np.cos(2 * np.pi * doy / 365)
 
@@ -161,7 +162,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             denom = late_mean.replace(0, np.nan)
             df[f"{idx}_early_late_ratio"] = early_mean / denom
 
-    # 12. C4-milestone features (MILHO is C4, rest are C3 except CAFE which is C3)
+    # 12. C4-milestone features (MILHO is C4; faster canopy closure than C3 cereals)
     stages_ordered = ["emergence", "vegetative", "flowering", "grain_fill", "maturity"]
     idx = "NDVI"
     stage_cols = [f"{idx}_mean_{s}" for s in stages_ordered if f"{idx}_mean_{s}" in df.columns]
@@ -192,16 +193,27 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
                 ratio = (denom - df[bl]) / denom
                 df[f"{idx}_rise_{stage}_vs_baseline"] = ratio
 
-    # NOTE: do NOT derive any feature from `crop_label` here — that is the target.
-    # `is_c4 = (crop_label == "MILHO")` was target leakage: perfect in training,
-    # absent at inference (no label), which silently breaks MILHO in production.
-    _assert_no_label_leakage(df)
+    # 13. Late-season drydown ratios — TRIGO senesces more completely than AVEIA:
+    #     ratio captures relative water/greenness retention, not just absolute level.
+    for idx in INDICES:
+        gf_col = f"{idx}_mean_grain_fill"
+        mat_col = f"{idx}_mean_maturity"
+        if gf_col in df.columns and mat_col in df.columns:
+            denom = df[gf_col].replace(0, np.nan)
+            df[f"{idx}_maturity_vs_grainfill_ratio"] = df[mat_col] / denom
 
+    # 14. Vegetative-to-maturity total drop — captures full drydown magnitude
+    for idx in INDICES:
+        veg_col = f"{idx}_mean_vegetative"
+        mat_col = f"{idx}_mean_maturity"
+        if veg_col in df.columns and mat_col in df.columns:
+            df[f"{idx}_veg_to_maturity_drop"] = df[veg_col] - df[mat_col]
+
+    _assert_no_label_leakage(df)
     return df
 
 
 def _assert_no_label_leakage(df: pd.DataFrame) -> None:
-    """Guard against accidentally engineering a feature out of the target label."""
     leaked = [c for c in ("is_c4", "is_c4_x_NDVI_peak_stage",
                           "is_c4_x_EVI_senescence_rate") if c in df.columns]
     if leaked:
@@ -228,23 +240,27 @@ def load_data(
     planting_year: int | None = None,
     n_per_crop: int | None = None,
     fallback_year: int | None = None,
+    exclude_crops: list[str] | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray, list[str], LabelEncoder]:
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found: {db_path}")
     with sqlite3.connect(db_path) as conn:
-        # Filter out AVEIA from the query directly
-        # df = pd.read_sql("SELECT * FROM phenology_features WHERE crop_label != 'AVEIA'", conn)
         df = pd.read_sql("SELECT * FROM phenology_features", conn)
     if df.empty:
-        raise ValueError("phenology_features table is empty or contains no non-AVEIA crops")
+        raise ValueError("phenology_features table is empty")
+
+    if exclude_crops:
+        exclude = {c.strip().upper() for c in exclude_crops}
+        before = len(df)
+        df = df[~df["crop_label"].str.upper().isin(exclude)].reset_index(drop=True)
+        logger.info("Excluded crops %s: %d -> %d samples", sorted(exclude), before, len(df))
+        if df.empty:
+            raise ValueError("No rows left after excluding crops")
 
     for col in df.columns:
         if col not in TEXT_COLS:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Train only on fields with a real (parseable) planting date. Rows whose
-    # planting_date was missing/estimated would have phenological stage windows
-    # anchored to a guessed date, corrupting every stage feature.
     before = len(df)
     valid_planting = pd.to_datetime(df["planting_date"], errors="coerce").notna()
     df = df[valid_planting].reset_index(drop=True)
@@ -360,14 +376,14 @@ def select_features(
 def tune_xgb(
     X: pd.DataFrame,
     y: np.ndarray,
-    n_trials: int = 80,
+    n_trials: int = 120,
     n_folds: int = 5,
 ) -> dict:
     cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
 
     def objective(trial):
         params = {
-            "n_estimators": trial.suggest_int("n_estimators", 200, 1000),
+            "n_estimators": trial.suggest_int("n_estimators", 200, 1200),
             "max_depth": trial.suggest_int("max_depth", 3, 10),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
@@ -384,52 +400,19 @@ def tune_xgb(
             "n_jobs": -1,
         }
         model = xgb.XGBClassifier(**params)
-        # Training set is class-balanced (equal samples/crop), so class weighting
-        # is a no-op here; keep a plain macro-F1 CV objective.
         scores = cross_val_score(model, X, y, cv=cv, scoring="f1_macro", n_jobs=1)
         return scores.mean()
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(
         direction="maximize",
-        study_name="xgb_v4",
-        pruner=optuna.pruners.MedianPruner(n_warmup_steps=10),
+        study_name="xgb_v5",
+        pruner=optuna.pruners.MedianPruner(n_warmup_steps=15),
     )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
     logger.info("Best XGB F1 macro: %.4f", study.best_value)
     logger.info("Best XGB params: %s", study.best_params)
-    return study.best_params
-
-
-def tune_extratrees(
-    X: pd.DataFrame,
-    y: np.ndarray,
-    n_trials: int = 40,
-    n_folds: int = 5,
-) -> dict:
-    cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
-
-    def objective(trial):
-        params = {
-            "n_estimators": trial.suggest_int("n_estimators", 200, 1000),
-            "max_depth": trial.suggest_int("max_depth", 5, 30),
-            "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
-            "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-            "max_features": trial.suggest_float("max_features", 0.3, 1.0),
-            "random_state": 42,
-            "n_jobs": -1,
-        }
-        model = ExtraTreesClassifier(**params)
-        scores = cross_val_score(model, X, y, cv=cv, scoring="f1_macro", n_jobs=1)
-        return scores.mean()
-
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
-    study = optuna.create_study(direction="maximize", study_name="et_v4")
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-
-    logger.info("Best ET F1 macro: %.4f", study.best_value)
-    logger.info("Best ET params: %s", study.best_params)
     return study.best_params
 
 
@@ -441,120 +424,80 @@ def train_and_evaluate(
     feature_names: list[str],
     le: LabelEncoder,
     n_folds: int = 5,
-    optuna_trials_xgb: int = 80,
-    optuna_trials_et: int = 40,
-    output_dir: str = "src/model/output_v4",
-) -> VotingClassifier:
+    optuna_trials: int = 120,
+    output_dir: str = "src/model/output_v5",
+    excluded_crops: list[str] | None = None,
+) -> xgb.XGBClassifier:
     os.makedirs(output_dir, exist_ok=True)
 
-    # ── Feature selection ────────────────────────────────────────────────
     X_sel, sel_features = select_features(X, y, feature_names, keep_ratio=0.60)
     logger.info("Selected features: %s", sel_features[:10])
 
     with open(os.path.join(output_dir, "selected_features.json"), "w") as f:
         json.dump(sel_features, f, indent=2)
 
-    # ── Tune both models ─────────────────────────────────────────────────
-    if optuna_trials_xgb > 0:
-        logger.info("Tuning XGBoost with %d trials...", optuna_trials_xgb)
-        best_xgb = tune_xgb(X_sel, y, n_trials=optuna_trials_xgb, n_folds=n_folds)
-        best_xgb.update({
+    if optuna_trials > 0:
+        logger.info("Tuning XGBoost with %d trials...", optuna_trials)
+        best_params = tune_xgb(X_sel, y, n_trials=optuna_trials, n_folds=n_folds)
+        best_params.update({
             "objective": "multi:softprob", "eval_metric": "mlogloss",
             "tree_method": "hist", "random_state": 42, "n_jobs": -1,
         })
     else:
-        best_xgb = {
-            "n_estimators": 300, "max_depth": 6, "learning_rate": 0.1,
+        best_params = {
+            "n_estimators": 500, "max_depth": 6, "learning_rate": 0.05,
             "subsample": 0.8, "colsample_bytree": 0.8, "min_child_weight": 3,
             "objective": "multi:softprob", "eval_metric": "mlogloss",
             "tree_method": "hist", "random_state": 42, "n_jobs": -1,
         }
 
-    if optuna_trials_et > 0:
-        logger.info("Tuning ExtraTrees with %d trials...", optuna_trials_et)
-        best_et = tune_extratrees(X_sel, y, n_trials=optuna_trials_et, n_folds=n_folds)
-        best_et.update({"random_state": 42, "n_jobs": -1})
-    else:
-        best_et = {
-            "n_estimators": 500, "max_depth": 20, "min_samples_split": 5,
-            "min_samples_leaf": 2, "max_features": 0.7,
-            "random_state": 42, "n_jobs": -1,
-        }
-
     with open(os.path.join(output_dir, "best_params.json"), "w") as f:
-        json.dump({"xgboost": best_xgb, "extratrees": best_et}, f, indent=2, default=str)
+        json.dump({"xgboost": best_params}, f, indent=2, default=str)
 
-    xgb_model = xgb.XGBClassifier(**best_xgb)
-    et_model = ExtraTreesClassifier(**best_et)
+    model = xgb.XGBClassifier(**best_params)
 
-    ensemble = VotingClassifier(
-        estimators=[("xgb", xgb_model), ("et", et_model)],
-        voting="soft",
-    )
-
-    # ── Cross-validation ─────────────────────────────────────────────────
+    logger.info("Running %d-fold CV...", n_folds)
     cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    y_pred = cross_val_predict(model, X_sel, y, cv=cv)
 
-    logger.info("Running %d-fold CV for individual models...", n_folds)
-    y_pred_xgb = cross_val_predict(xgb_model, X_sel, y, cv=cv)
-    y_pred_et = cross_val_predict(et_model, X_sel, y, cv=cv)
+    acc = accuracy_score(y, y_pred)
+    f1m = f1_score(y, y_pred, average="macro")
+    f1w = f1_score(y, y_pred, average="weighted")
+    logger.info("XGBoost — Acc: %.2f%% | F1 macro: %.4f | F1 weighted: %.4f",
+                acc * 100, f1m, f1w)
 
-    logger.info("Running %d-fold CV for ensemble...", n_folds)
-    y_pred_ens = cross_val_predict(ensemble, X_sel, y, cv=cv)
+    report = classification_report(y, y_pred, target_names=le.classes_, output_dict=True)
+    report_str = classification_report(y, y_pred, target_names=le.classes_)
+    print(f"\nXGBoost Classification Report:\n" + report_str)
 
-    results = {}
-    for name, y_p in [("xgboost", y_pred_xgb), ("extratrees", y_pred_et), ("ensemble", y_pred_ens)]:
-        acc = accuracy_score(y, y_p)
-        f1m = f1_score(y, y_p, average="macro")
-        f1w = f1_score(y, y_p, average="weighted")
-        results[name] = {"accuracy": acc, "f1_macro": f1m, "f1_weighted": f1w}
-        logger.info("%s — Acc: %.2f%% | F1 macro: %.4f | F1 weighted: %.4f",
-                    name.upper(), acc * 100, f1m, f1w)
+    cm = confusion_matrix(y, y_pred)
+    _plot_confusion_matrix(cm, le.classes_, output_dir)
 
-    best_name = max(results, key=lambda k: results[k]["f1_macro"])
-    best_preds = {"xgboost": y_pred_xgb, "extratrees": y_pred_et, "ensemble": y_pred_ens}[best_name]
-    logger.info("Best model: %s", best_name.upper())
+    logger.info("Training final model on all data...")
+    model.fit(X_sel, y)
 
-    report = classification_report(y, best_preds, target_names=le.classes_, output_dict=True)
-    report_str = classification_report(y, best_preds, target_names=le.classes_)
-    print(f"\n{best_name.upper()} Classification Report:\n" + report_str)
-
-    cm = confusion_matrix(y, best_preds)
-    _plot_confusion_matrix(cm, le.classes_, output_dir, title_prefix=best_name.upper())
-
-    # ── Train final ensemble on all data ─────────────────────────────────
-    logger.info("Training final ensemble on all data...")
-    ensemble.fit(X_sel, y)
-
-    xgb_final = ensemble.named_estimators_["xgb"]
-    _plot_feature_importance(xgb_final, sel_features, output_dir)
-    _plot_feature_importance_by_category(xgb_final, sel_features, output_dir)
+    _plot_feature_importance(model, sel_features, output_dir)
+    _plot_feature_importance_by_category(model, sel_features, output_dir)
 
     model_path = os.path.join(output_dir, "xgboost_crop_classifier.json")
-    xgb_final.save_model(model_path)
+    model.save_model(model_path)
     logger.info("XGB model saved: %s", model_path)
-
-    acc = results[best_name]["accuracy"]
-    f1_macro = results[best_name]["f1_macro"]
-    f1_weighted = results[best_name]["f1_weighted"]
 
     metrics = {
         "timestamp": datetime.now().isoformat(),
-        "version": "v4",
-        "best_model": best_name,
+        "version": "v5",
+        "excluded_crops": sorted({c.strip().upper() for c in excluded_crops}) if excluded_crops else [],
         "n_samples": int(len(y)),
         "n_features_original": int(X.shape[1]),
         "n_features_selected": int(X_sel.shape[1]),
         "n_classes": int(len(le.classes_)),
         "classes": list(le.classes_),
         "cv_folds": n_folds,
-        "optuna_trials_xgb": optuna_trials_xgb,
-        "optuna_trials_et": optuna_trials_et,
+        "optuna_trials": optuna_trials,
         "accuracy": round(acc, 4),
-        "f1_macro": round(f1_macro, 4),
-        "f1_weighted": round(f1_weighted, 4),
+        "f1_macro": round(f1m, 4),
+        "f1_weighted": round(f1w, 4),
         "null_rate": round(float(X.isna().mean().mean()), 4),
-        "all_results": {k: {m: round(v, 4) for m, v in r.items()} for k, r in results.items()},
         "per_class": {
             cls: {
                 "precision": round(report[cls]["precision"], 4),
@@ -570,26 +513,25 @@ def train_and_evaluate(
         json.dump(metrics, f, indent=2)
     logger.info("Metrics saved: %s", metrics_path)
 
-    return ensemble
+    return model
 
 
 # ── Plots ────────────────────────────────────────────────────────────────────
 
-def _plot_confusion_matrix(cm: np.ndarray, class_names: list, output_dir: str,
-                           title_prefix: str = ""):
+def _plot_confusion_matrix(cm: np.ndarray, class_names: list, output_dir: str):
     sns.set_theme(style="white")
     fig, axes = plt.subplots(1, 2, figsize=(18, 7))
 
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
                 xticklabels=class_names, yticklabels=class_names, ax=axes[0])
-    axes[0].set_title(f"{title_prefix} Confusion Matrix (counts)", fontsize=14, fontweight="bold")
+    axes[0].set_title("Confusion Matrix (counts)", fontsize=14, fontweight="bold")
     axes[0].set_xlabel("Predicted")
     axes[0].set_ylabel("True")
 
     cm_pct = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
     sns.heatmap(cm_pct, annot=True, fmt=".1f", cmap="Blues",
                 xticklabels=class_names, yticklabels=class_names, ax=axes[1])
-    axes[1].set_title(f"{title_prefix} Confusion Matrix (% per class)", fontsize=14, fontweight="bold")
+    axes[1].set_title("Confusion Matrix (% per class)", fontsize=14, fontweight="bold")
     axes[1].set_xlabel("Predicted")
     axes[1].set_ylabel("True")
 
@@ -650,6 +592,7 @@ def _plot_feature_importance_by_category(model: xgb.XGBClassifier, feature_names
         "Planting date": 0.0,
         "Late-stage divergence": 0.0,
         "Early/late ratio": 0.0,
+        "Drydown ratios": 0.0,
         "Null indicators": 0.0,
         "Geo/area": 0.0,
         "Other": 0.0,
@@ -664,6 +607,8 @@ def _plot_feature_importance_by_category(model: xgb.XGBClassifier, feature_names
             categories["Geo/area"] += gain
         elif "early_late_ratio" in name:
             categories["Early/late ratio"] += gain
+        elif "maturity_vs_grainfill_ratio" in name or "veg_to_maturity_drop" in name:
+            categories["Drydown ratios"] += gain
         elif "NDVI_minus_" in name or "std_ratio_" in name:
             categories["Late-stage divergence"] += gain
         elif "delta_" in name:
@@ -709,25 +654,25 @@ def _plot_feature_importance_by_category(model: xgb.XGBClassifier, feature_names
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Train XGBoost crop classifier v4")
-    parser.add_argument("--db", default=os.path.join("src", "data", "features", "features.db"),
+    parser = argparse.ArgumentParser(description="Train XGBoost crop classifier v5")
+    parser.add_argument("--db", default=os.path.join("src", "data", "features_v5", "features.db"),
                         help="Path to features SQLite DB")
-    parser.add_argument("--year", type=int, default=None,
-                        help="Primary planting year (e.g. 2025)")
-    parser.add_argument("--fallback-year", type=int, default=None,
-                        help="Fallback year to top up crops short of --n-per-crop (e.g. 2024)")
-    parser.add_argument("--n-per-crop", type=int, default=None,
-                        help="Stratified sample: max N rows per crop")
-    parser.add_argument("--min-stages", type=int, default=3,
-                        help="Minimum stages covered to include a row")
+    parser.add_argument("--year", type=int, default=None)
+    parser.add_argument("--fallback-year", type=int, default=None)
+    parser.add_argument("--n-per-crop", type=int, default=None)
+    parser.add_argument("--min-stages", type=int, default=3)
     parser.add_argument("--folds", type=int, default=5)
-    parser.add_argument("--trials-xgb", type=int, default=80)
-    parser.add_argument("--trials-et", type=int, default=40)
+    parser.add_argument("--trials", type=int, default=120,
+                        help="Optuna trials for XGBoost (default 120)")
+    parser.add_argument("--exclude-crops", nargs="*", default=None,
+                        help="Crop labels to drop before training (e.g. ARROZ CAFE)")
+    parser.add_argument("--tag", default=None,
+                        help="Suffix appended to the run folder name (e.g. 5crops)")
     args = parser.parse_args()
 
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Save runs in a separate directory runs_v4
-    output_dir = os.path.join("src", "model", "runs_v4", run_ts)
+    run_name = f"{run_ts}_{args.tag}" if args.tag else run_ts
+    output_dir = os.path.join("src", "model", "runs_v5", run_name)
 
     X, y, feature_names, le = load_data(
         args.db,
@@ -735,13 +680,14 @@ if __name__ == "__main__":
         planting_year=args.year,
         n_per_crop=args.n_per_crop,
         fallback_year=args.fallback_year,
+        exclude_crops=args.exclude_crops,
     )
 
     model = train_and_evaluate(
         X, y, feature_names, le,
         n_folds=args.folds,
-        optuna_trials_xgb=args.trials_xgb,
-        optuna_trials_et=args.trials_et,
+        optuna_trials=args.trials,
         output_dir=output_dir,
+        excluded_crops=args.exclude_crops,
     )
     logger.info("Run output: %s", output_dir)
