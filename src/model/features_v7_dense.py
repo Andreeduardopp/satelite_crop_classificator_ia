@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 # Keep in sync with phenology_feature_pipeline_v6 (N_DEKADS/N_FINE, indices).
-GRIDS = [("d", 17), ("f", 18)]
+GRIDS = [("d", 29), ("f", 18)]
 OPTICAL = ["NDVI", "NDWI", "EVI", "NDRE", "CIRE", "MTCI", "PSRI", "NDMI"]
 RED_EDGE = ["NDRE", "CIRE", "MTCI"]
 
