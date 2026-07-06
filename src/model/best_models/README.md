@@ -21,6 +21,10 @@ All three were trained by `train_xgboost_v7.py` (weighted 5-fold OOF CV, class b
 up-weight, global abstain gate, season-stratified diagnostic). "v7" is the *trainer* name; the
 distinction that matters for inference is the *pipeline* / grid in the table above.
 
+> 📂 **The exact training/test data is documented in [`DATASETS.md`](DATASETS.md)** (provenance,
+> feature schema, class/geographic/temporal variability, biases) and snapshotted byte-for-byte in
+> [`datasets/`](datasets/) with checksums in [`datasets/MANIFEST.json`](datasets/MANIFEST.json).
+
 ## Which pipeline, and why it differs
 
 Both pipelines issue one Sentinel-Hub Statistical-API request per source and aggregate the crop
