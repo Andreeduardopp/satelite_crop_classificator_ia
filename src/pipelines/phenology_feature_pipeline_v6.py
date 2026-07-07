@@ -81,19 +81,32 @@ MIN_USABLE_PCT_PER_BIN = 0.20           # clear-pixel fraction to accept a bin
 
 SAR_INDEX_KEYS = {"VV": "vv", "VH": "vh", "CR": "cr", "RVI": "rvi"}
 
-# Statistical API caps the output grid (~2500 px/side). For big fields, resx=10m would
-# exceed it and the API 400s, so we coarsen resolution adaptively to keep the grid in
-# range (normal fields stay at 10 m; only large polygons are downsampled).
+# Resolution constraints. The request `bounds` are in EPSG:4326, so `resx`/`resy` MUST be
+# expressed in DEGREES to match. (The prior code passed metres here, which the API read as
+# ~10 deg/px, collapsing every field to ~1 pixel: large fields breached S2L2A's 1500 m/px
+# cap and 400'd, and all fields lost their within-field p10/p90 spread. See
+# LARGE_FIELD_FAILURE_INVESTIGATION.md.) Two limits apply: never coarser than the S2L2A
+# 1500 m/px cap (the degree conversion below keeps us at ~10 m, far under it) and never a
+# grid over ~2500 px/side (coarsen only huge polygons to stay in range).
 STATS_MAX_DIM = 2500
+TARGET_RES_M = 10.0                     # native S2 resolution we aim for
+_M_PER_DEG_LAT = 110_540
+_M_PER_DEG_LON_EQ = 111_320
 
 
-def _adaptive_res(coords) -> float:
-    """Meters/pixel that keeps the field's bbox under STATS_MAX_DIM px (>= 10 m)."""
+def _adaptive_res(coords) -> tuple[float, float]:
+    """(resx, resy) in DEGREES for an EPSG:4326 Statistical-API request.
+
+    Targets ~TARGET_RES_M metres/pixel, but coarsens per-axis so the output grid never
+    exceeds STATS_MAX_DIM px on either side (only very large polygons are downsampled)."""
     minx, miny, maxx, maxy = ShapelyPolygon(coords).bounds
     mid_lat = (miny + maxy) / 2.0
-    w_m = (maxx - minx) * 111_320 * math.cos(math.radians(mid_lat))
-    h_m = (maxy - miny) * 110_540
-    return max(10.0, math.ceil(max(w_m, h_m) / STATS_MAX_DIM))
+    cos_lat = max(math.cos(math.radians(mid_lat)), 1e-6)
+    base_x = TARGET_RES_M / (_M_PER_DEG_LON_EQ * cos_lat)   # ~10 m in degrees of longitude
+    base_y = TARGET_RES_M / _M_PER_DEG_LAT                  # ~10 m in degrees of latitude
+    resx = max(base_x, (maxx - minx) / STATS_MAX_DIM)
+    resy = max(base_y, (maxy - miny) / STATS_MAX_DIM)
+    return resx, resy
 
 # Map a stat name to its location in the Stats-API band object.
 _PCTL = {"p10": "10.0", "median": "50.0", "p90": "90.0"}
@@ -171,7 +184,7 @@ class PhenologyFeaturePipelineV6(PhenologyFeaturePipeline):
             "aggregation": {
                 "timeRange": {"from": f"{ds}T00:00:00Z", "to": f"{de}T23:59:59Z"},
                 "aggregationInterval": {"of": f"P{interval_days}D"},
-                "resx": res, "resy": res,
+                "resx": res[0], "resy": res[1],
                 "evalscript": EVALSCRIPT_OPTICAL_STATS,
             },
             "calculations": {"default": {"statistics": {"default": {"percentiles": {"k": [10, 50, 90]}}}}},
@@ -196,7 +209,7 @@ class PhenologyFeaturePipelineV6(PhenologyFeaturePipeline):
             "aggregation": {
                 "timeRange": {"from": f"{ds}T00:00:00Z", "to": f"{de}T23:59:59Z"},
                 "aggregationInterval": {"of": f"P{DEKAD_DAYS}D"},
-                "resx": res, "resy": res,
+                "resx": res[0], "resy": res[1],
                 "evalscript": EVALSCRIPT_SAR_STATS,
             },
             "calculations": {"default": {"statistics": {"default": {"percentiles": {"k": [10, 50, 90]}}}}},

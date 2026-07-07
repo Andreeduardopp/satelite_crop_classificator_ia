@@ -680,7 +680,9 @@ class PhenologyFeaturePipeline:
             try:
                 resp = http_requests.post(
                     f"{self.service.url_base}/api/v1/statistics",
-                    timeout=60, headers=headers, data=json.dumps(payload),
+                    # Large polygons aggregate many scenes server-side and can take ~90 s;
+                    # 60 s used to time these out (silently -> dekads_covered=0 rows).
+                    timeout=180, headers=headers, data=json.dumps(payload),
                 )
                 # 400/403/404 are permanent client errors — retrying never helps.
                 # Log the API error body so we can diagnose the root cause.

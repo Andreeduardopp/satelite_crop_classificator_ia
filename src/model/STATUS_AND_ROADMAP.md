@@ -1,205 +1,220 @@
-# Crop Classifier — Status & Roadmap (7 cultures)
+# Crop Classifier — Status & Upgrade Plan
 
-**Last updated:** 2026-06-30
-**Current model:** `runs_v7/20260630_021450_dense_7crop_cafe/` — 7 crops, held-out **0.936 acc / 0.937 macro-F1**.
+**Single source of truth** for where the project is and what to do next. Merges the former
+`MODEL_UPGRADE_PLAN.md`, `DATA_UPGRADE_PLAN.md`, `best_models/DATASETS.md`, and
+`pipelines/LARGE_FIELD_FAILURE_INVESTIGATION.md`.
 
----
+**Last updated:** 2026-07-07
+**Current models (all on `features_v8`, the resolution-fixed re-extraction):**
 
-## 1. Where we are
+| Model (`best_models/`) | Crops | Held-out test acc / macro-F1 | n |
+|---|---|---|---|
+| `5_culturas_no_aveia` | ARROZ, FEIJAO, MILHO, SOJA, TRIGO | **0.983 / 0.982** | 973 |
+| `6_culturas_no_aveia` | + CAFE | **0.979 / 0.978** | 1,173 |
+| `7_culturas_cafe` | + AVEIA (all 7) | **0.952 / 0.952** | 1,373 |
 
-### The model (v7 dense, 7 crops)
-SOJA, MILHO, TRIGO, AVEIA, FEIJAO, ARROZ, **CAFE**. Held-out test (1,310 fields):
-
-| Culture | Precision | Recall | F1 | note |
-|---|---|---|---|---|
-| ARROZ | 0.99 | 0.97 | **0.98** | ≈0 |
-| CAFE | 0.99 | 0.95 | **0.97** | 🆕 |
-| FEIJAO | 0.94 | 1.00 | **0.97** | ≈0 |
-| SOJA | 0.95 | 0.96 | **0.96** | ≈0 |
-| MILHO | 0.95 | 0.94 | **0.95** | ≈0 |
-| TRIGO | 0.87 | 0.86 | **0.87** | ≈0 |
-| AVEIA | 0.86 | 0.86 | **0.86** | ≈0 |
-| **Overall** | | | **0.936** | **beats old 7-crop 0.910 (+0.026)** |
-
-**CAFE near-solved on arrival** — precision 0.99 (1 false positive on test); recall 0.95, the 9
-misses leaking to annual look-alikes (MILHO 5, SOJA 3, ARROZ 1). Once *covered* by the extended
-grid it separates cleanly from the six annuals, as expected for a perennial with no annual
-green-up/senescence cycle. Overall sits just below the 6-crop 0.941 because the hard AVEIA↔TRIGO
-pair (52 swaps) is the remaining error budget — CAFE itself added almost no new confusion.
-
-**Serve-safety verified:** all crops carry real data in the new late dekads d17–d28 (non-null
-0.70–0.94); CAFE (0.86) is *not* an outlier, so there is no "late-bins-present ⇒ CAFE" shortcut
-— the uniform re-extraction over the CAFE-length grid did its job.
-
-> ⚠️ **Regression — safrinha SOJA.** Second-season SOJA training samples collapsed **158 → 32**
-> because matching v6's field_ids found only 633 / 777 SOJA in `dataset_split/train` (the ~144
-> missing were disproportionately safrinha — v6 had sourced them elsewhere). Held-out safrinha
-> recall fell **0.867 → 0.60** (n=15). The critical **SOJA→MILHO confusion stays at 0**, so the
-> economic risk is contained, but the missing safrinha KMLs should be recovered and re-extracted
-> over the v7 grid (see §5.4) before the safrinha claim is restored.
-
-### The pipeline (v6 dense)
-`phenology_feature_pipeline_v6.py` — one full-season Statistical-API request per source with
-server-side time aggregation on a **hybrid grid**: dekadal P10D over the full season + fine
-P5D over flowering→maturity. **~1.4 s/field vs v5's ~9.6 (≈7×)**, field-level concurrency +
-shared rate limiter + adaptive resolution, resume-safe.
-
-### How we got here (one paragraph)
-v5 used 6 coarse phenological stages; AVEIA↔TRIGO (two C3 cereals) was the entire error
-budget (F1 0.76–0.78, 90 swaps). Path A — reshaping the stage features — hit a hard ceiling
-(~0.857 pair AUC). Path B — a **denser temporal pipeline** — added +0.10 AUC on a matched
-pilot and lifted the 5-crop benchmark 0.886 → 0.926. A follow-up (engineered dense-timing
-features) tested **negative** — the raw dense bins already carry the signal. Full trail:
-[`AVEIA_TRIGO_DISCRIMINATION.md`](AVEIA_TRIGO_DISCRIMINATION.md),
-[`V7_NEXT_LEVERS.md`](V7_NEXT_LEVERS.md),
-[`SECOND_SEASON_SOJA_RESULTS.md`](SECOND_SEASON_SOJA_RESULTS.md).
-
-### Components
-| Area | File |
-|---|---|
-| Dense pipeline | `src/pipelines/phenology_feature_pipeline_v6.py` (annual grid, +155d) |
-| Extended-grid pipeline | `src/pipelines/phenology_feature_pipeline_v7.py` (v6 subclass, `N_DEKADS=29`, +275d for CAFE) |
-| v7 trainer | `src/model/train_xgboost_v7.py` (reuses v6 CV/abstain/diagnostic) |
-| Probes | `probe_v6_dense.py` (matched dense vs stage), `probe_aveia_trigo.py` |
-| Data (git-ignored) | `features_v6/` (annual grid), `features_v6_ext/` (train 6,174, extended grid, 7 crops incl. CAFE 487), `features_test_v6_ext/` (test 1,373 incl. CAFE 200) |
-| Guardrail | abstain gate (`abstain_policy.json`) + season-stratified diagnostic |
-
-### Known limitations
-- **AVEIA/TRIGO 0.86–0.87** — improved, not solved (~52 residual swaps; ~0.9 pair-AUC ceiling). Now the dominant error budget.
-- **SAR ~90 % null** in dekadal bins (S1 revisit too sparse per 10-day bin) → texture untapped.
-- ~~**Dense grid too short for CAFE**~~ ✅ **resolved** — v7 pipeline extends the dekadal grid to +275d (`N_DEKADS=29`); all 7 crops re-extracted uniformly over it.
-- **Safrinha SOJA regressed** (recall 0.60, n=15) after the v7 re-extraction lost ~144 SOJA KMLs (mostly safrinha) — see §1 warning and §5.4.
-- `dekads_covered ≥ 3` gate drops a few heavily-clouded fields at eval.
+The ladder is deliberate: **AVEIA is the accuracy-dragging crop** (its confusion with TRIGO is the
+whole residual error budget), so the 5- and 6-crop models drop it and land at ~0.98. Deployments
+that don't need oats should use those.
 
 ---
 
-## 2. The 7-crop universe
+# PART I — WHERE WE ARE
 
-| Crop | Type | Cycle (d) | In v7? | Discriminating signal / risk |
-|---|---|---|---|---|
-| SOJA | C3 legume, annual | ~130 | ✅ | safrinha vs MILHO (solved) |
-| MILHO | C4 grass, annual | ~140 | ✅ | C4 vs C3 (easy) |
-| FEIJAO | C3 legume, annual | ~90 | ✅ | short cycle (easy) |
-| AVEIA | C3 cereal, annual | ~130 | ✅ | vs TRIGO — senescence timing |
-| TRIGO | C3 cereal, annual | ~135 | ✅ | vs AVEIA — senescence timing |
-| ARROZ | C3 grass, flooded | ~145 | ✅ | flooding (high early NDMI/NDWI + low SAR) — added 2026-06-28, F1 **0.99** |
-| **CAFE** | perennial, evergreen | ~270 | ✅ | no annual senescence cycle — separates cleanly; added 2026-06-30 over the extended grid, F1 **0.97** |
+## 1. The models
 
-For reference, the old **stage-based 7-crop** model scored 0.910 acc with AVEIA/TRIGO as the
-bottleneck. The dense 7-crop model now scores **0.936** — the new work was *coverage* (extending
-the grid for CAFE), and CAFE added almost no new confusion. The remaining bottleneck is the old
-AVEIA/TRIGO pair.
+All three are dense XGBoost classifiers trained by `train_xgboost_v7.py` (weighted 5-fold OOF CV,
+class balance, safrinha-SOJA up-weight, global abstain gate, season-stratified diagnostic) on the
+**v7 extended grid** (`features_v8`), differing only by which crops are excluded at load.
 
----
+**7-crop held-out per-class (test, n=1,373):**
 
-## 3. The grid-length blocker — ✅ resolved (v7 pipeline)
+| Crop | P | R | F1 |
+|---|---|---|---|
+| ARROZ | 0.99 | 0.98 | 0.99 |
+| CAFE | 0.98 | 0.97 | 0.97 |
+| FEIJAO | 0.94 | 1.00 | 0.97 |
+| SOJA | 0.99 | 0.96 | 0.97 |
+| MILHO | 0.96 | 0.96 | 0.96 |
+| AVEIA | 0.89 | 0.92 | **0.90** |
+| TRIGO | 0.92 | 0.89 | **0.90** |
+| **Overall** | | | **0.952** |
 
-The v6 dense grid spanned only **−15 → +155 days** (17 dekads), which fit every annual but left
-CAFE's grain_fill/maturity (≈150–270 d) uncovered. `phenology_feature_pipeline_v7.py` (a thin
-v6 subclass) extends the dekadal grid to **−15 → +275 days** (`N_DEKADS=29`, ~1485 cols, under
-SQLite's ceiling); the P5D fine grid is unchanged (per-crop, flowering-anchored). Because the
-classifier can't know the crop at inference, **all 7 crops were re-extracted uniformly over this
-grid** (`features_v6_ext` / `features_test_v6_ext`) so annuals carry real post-harvest data in
-the late dekads — no train/serve skew, no "late-bins ⇒ CAFE" shortcut (verified, §1).
+In the 5-/6-crop models (no AVEIA) **TRIGO reaches F1 1.00** — removing its only confuser eliminates
+the pair. Abstain gate: all three keep ≥99.97 % coverage at threshold 0.30 (covered-accuracy ≈ OOF).
+Each model folder holds the model + `selected_features.json` + `abstain_policy.json` + `metrics.json`
++ `test_eval/` + plots; **a model is bound to its `selected_features.json` — extract inference
+features with `phenology_feature_pipeline_v7.py` and reindex to that list.**
 
----
+## 2. The pipeline
 
-## 4. Roadmap
+`phenology_feature_pipeline_v7.py` (a thin subclass of `_v6.py`) — one Statistical-API request per
+source, aggregated server-side on a **hybrid grid**: dekadal **P10D** over `planting−15 … +275 d`
+(`N_DEKADS=29`, covers CAFE's ~270-day cycle) + fine **P5D** over flowering→maturity (the
+AVEIA/TRIGO senescence-timing window). ~4 calls/field, field-level concurrency behind a shared rate
+limiter, resume-safe. Schema ≈ 1,485 columns.
 
-### Phase 1 — 6 crops: add ARROZ  ✅ **DONE 2026-06-28**
-Ran exactly as planned, no pipeline change. Reproduce:
-```
-# train (637 fields, matched to v5) — appends into features_v6
-python src/pipelines/phenology_feature_pipeline_v6.py \
-  --kml-root src/data/dataset_split/train/arquivos_kml_ARROZ \
-  --match-db src/data/features_v5/features.db --output-dir src/data/features_v6
-# test (200 fields) — appends into features_test_v6
-python src/pipelines/phenology_feature_pipeline_v6.py \
-  --kml-root src/data/dataset_split/test/arquivos_kml_ARROZ \
-  --match-db src/data/features_test_v5/features.db --output-dir src/data/features_test_v6
-# retrain 6 classes (v6 has no CAFE, so no exclude needed)
-python src/model/train_xgboost_v7.py --tag dense_6crop_arroz
-```
-**Result:** held-out **0.941 acc / 0.941 macro-F1** (n=1,149); ARROZ F1 **0.99** (P 1.00 / R 0.97).
-The expected ARROZ↔MILHO/grass risk was minimal (≤1.8 % OOF); the SAR-null worry was a
-non-issue (NDMI + `VV_p10_d9` both rank top). Skipped the optional probe — ARROZ's signal was
-clearly strong enough to go straight to the full train. Run: `runs_v7/20260628_075718_dense_6crop_arroz/`.
-*(Used dedicated ARROZ kml-root dirs rather than `--exclude-crops`; trainer needed no `--exclude-crops` since v6 carries no CAFE.)*
+### 🔧 The resolution fix (2026-07-07) — the most recent and highest-impact change
+The pipeline set `aggregation.resx/resy` in **metres** (`10`) while the request `bounds` were in
+**EPSG:4326 (degrees)**, so Sentinel Hub read ~10°/pixel and **collapsed every field to ~1 pixel**.
+Two consequences, both now fixed:
+- **283 large fields (≥50 ha) 400'd** with *"request of N m/px exceeds the 1,500 m/px limit"* and were
+  silently written as `dekads_covered=0` rows (dropped at train, **unservable** at inference).
+- **All `p10/p90` features were degenerate** (`p10==p90==mean` for ~99 % of optical, ~88 % of SAR
+  bins) — a third of the schema carried no within-field information.
 
-### Phase 2 — 7 crops: add CAFE  ✅ **DONE 2026-06-30**
-Extended the dekadal grid to +275d via the new `phenology_feature_pipeline_v7.py`, then
-re-extracted all 7 crops uniformly. Reproduce:
-```
-# train: 6 crops matched to v6 (incl. AVEIA) + CAFE matched to v5 (487) — into features_v6_ext
-python src/pipelines/phenology_feature_pipeline_v7.py --kml-root src/data/dataset_split/train \
-  --match-db src/data/features_v6/features.db --output-dir src/data/features_v6_ext
-python src/pipelines/phenology_feature_pipeline_v7.py --kml-root src/data/dataset_split/train/arquivos_kml_CAFE \
-  --match-db src/data/features_v5/features.db --output-dir src/data/features_v6_ext
-# test: mirror into features_test_v6_ext (match features_test_v6, then features_test_v5 for CAFE)
-# train 7 classes on the extended DBs
-python src/model/train_xgboost_v7.py --train-db src/data/features_v6_ext/features.db \
-  --test-db src/data/features_test_v6_ext/features.db --tag dense_7crop_cafe
-```
-**Result:** held-out **0.936 acc / 0.937 macro-F1** (n=1,310); CAFE F1 **0.97** (P 0.99 / R 0.95),
-beating the old stage-based 7-crop **0.910**. CAFE leaks only 9/200 to annual look-alikes (MILHO
-5, SOJA 3, ARROZ 1), 1 false positive. Serve-safety verified. Caveat: safrinha SOJA regressed
-(see §1 warning, §5.4). Run: `runs_v7/20260630_021450_dense_7crop_cafe/`.
+`_adaptive_res` now returns `(resx, resy)` **in degrees** (~10 m/px per-axis, capped ≤2,500 px/side);
+the Stats-API timeout was raised 60→180 s (largest fields take ~87 s). Verified live: all seed 400s
+became HTTP 200 with full bins. Full set re-extracted into **`features_v8` / `features_v8_test`**
+(0 dead fields, 99.5 % multi-pixel), and the 7-crop retrain gained **+1.6 pp held-out acc (0.936→0.952)
+with AVEIA↔TRIGO swaps 52→38 (−27 %)** — so the long-standing "~0.857 AUC ceiling" on that pair was
+**partly a 1-pixel artifact**, not a hard limit. Repro tool: `scripts/probe_single_field.py`.
 
-*Design note (confirmed):* CAFE is a perennial with no annual green-up/senescence cycle, so once
-*covered* it separates easily from the six annuals. The risk was coverage, not confusion.
+> **Latent, not yet fixed:** `phenology_feature_pipeline_v4.py` and `_v5.py` carry the identical
+> `resx/resy:10`-with-degree-bounds bug. They don't build the current models — fix before any v4/v5
+> re-extraction.
 
----
+## 3. The datasets (`features_v8`)
 
-## 5. Cross-cutting upgrades (independent of crop count)
+One row = **one field** (a KML-delineated plot) in one season, with a crop label, planting date, and
+a full dense satellite time series. Train/test are split at the **field level** (curated
+`src/data/dataset_split/{train,test}/`); the same field never appears in both. Byte-exact snapshots +
+checksums live in `best_models/datasets/` (`features_v8.db`, `features_v8_test.db`, `MANIFEST.json`).
 
-### 5.1 Temporal grid — extended ✅, phenology-normalization still open
-The CAFE fix shipped via **fixed-max `N_DEKADS=29`** in `phenology_feature_pipeline_v7.py`. Note we
-chose **full uniform re-extraction** of all crops over the long grid (annuals carry real late-dekad
-data) rather than null-padding shorter crops — null-padding would have created a train/serve skew
-since the inference grid is the same length for every crop. Still open as a cleaner long-term design:
-- **Phenology-normalized resampling** — resample every field's cycle onto a fixed number of
-  **phenological-time** steps (0–100 % of cycle). Unifies FEIJAO (90 d), TRIGO (135 d) and CAFE
-  (270 d) into one comparable schema and makes timing features directly cross-crop. More work; the
-  principled design.
+**Schema:** bookkeeping columns (`field_id, crop_label, planting_date, area_hectares, latitude,
+longitude, dekads_covered, fine_covered, interpolated`) + time-binned satellite stats named
+`<SIGNAL>_<mean|p10|p90>_<d{k}|f{k}>`. **8 optical indices** (S2: NDVI, NDWI, EVI, NDRE, CIRE, MTCI,
+PSRI, NDMI) + **4 SAR channels** (S1: VV, VH, CR, RVI). The trainer appends null-indicators + cyclic
+planting-date features.
 
-### 5.2 SAR texture (Option 2 — the remaining AVEIA/TRIGO lever)
-Optical-only so far. Oats (open panicle) vs wheat (compact spike) differ in **canopy
-structure** → radar backscatter **texture** (GLCM), a signal *orthogonal* to spectral indices
-(so not subject to the redundancy that sank engineered optical timing). Needs (1) a coarser
-SAR grid (P20–30D) to kill the 90 % null, and (2) a raster/GLCM path. De-risk on the matched
-pilot before re-extracting. Details in [`V7_NEXT_LEVERS.md`](V7_NEXT_LEVERS.md).
+**Composition (train `features_v8`, 6,174 fields; test 1,373):**
 
-### 5.3 Abstain calibration
-Per-class / per-confusion-pair thresholds rather than one global gate, so the residual
-AVEIA↔TRIGO (and any new hard pair) is routed to `NAO_CLASSIFICAVEL` without sacrificing
-coverage on easy crops.
+| Crop | Train | Test |
+|---|--:|--:|
+| AVEIA | 1,200 | 200 |
+| MILHO | 1,200 | 182 |
+| FEIJAO | 1,016 | 175 |
+| TRIGO | 1,001 | 200 |
+| ARROZ | 637 | 200 |
+| SOJA | 633 | 216 |
+| CAFE | 487 | 200 |
 
-### 5.4 Data / evaluation
-- **Recover the missing safrinha SOJA** — the v7 re-extraction matched only 633/777 SOJA from
-  `dataset_split/train` (second-season samples 158 → 32), regressing safrinha recall to 0.60.
-  Find the ~144 missing SOJA KMLs (v6 sourced them outside `dataset_split/train`), extract them
-  over the v7 grid into `features_v6_ext`, and retrain to restore the safrinha claim.
-- Grow the **safrinha SOJA** test set beyond n≈15 (needs new KMLs) to tighten that recall CI.
-- As crops are added, **track new confusion pairs** with the same stratified diagnostic that
-  caught AVEIA/TRIGO and safrinha — never trust global macro-F1 alone.
+**Variability & biases (carry into any deployment decision):**
+- **Regional** — fields cluster tightly in **South Brazil** (lat −25…−28°, Paraná/SC/RS); a thin tail
+  reaches the North. A field in the Cerrado/Matopiba is out-of-distribution; the abstain gate is the
+  only safety net. *(This is the #1 real-world-accuracy risk — see Part II.)*
+- **Single crop-year** — training is essentially **2025**; inter-annual robustness is unproven.
+  Planting **month** is well spread (Feb + Jun peaks), so intra-year phenology is well represented.
+- **Field size** — median ~8 ha, up to 1,826 ha; small fields carry more mixed-pixel noise.
+- **Class imbalance** ~2.5× (handled by `class_balance` weights). AVEIA/MILHO capped at 1,200.
+- **SAR ~16 % null** (concentrated at season edges d0/d28) — *not* the "90 %" claimed in older docs;
+  SAR levels already contribute ~14.5 % of 7-crop gain. What's untapped is SAR **texture** (GLCM).
 
-### 5.5 Production
-Inference service that applies `selected_features.json` + the model + `abstain_policy.json`;
-monitor MILHO precision and the AVEIA/TRIGO / ARROZ confusions in the field.
+## 4. Resolved / corrected (don't re-investigate)
+- ✅ **Large-field extraction failure & 1-pixel degeneracy** — root-caused to the resx/resy unit bug,
+  fixed, re-extracted (§2).
+- ✅ **Grid too short for CAFE** — v7 extends the dekadal grid to +275 d; all crops re-extracted
+  uniformly (annuals carry real post-harvest late-dekad data → no train/serve skew, no
+  "late-bins ⇒ CAFE" shortcut, verified).
+- ✅ **"SAR ~90 % null"** — stale; it's ~16 % (§3).
+- **Engineered dense-timing features** — tested negative; raw dense bins already carry the senescence
+  timing. See `AVEIA_TRIGO_DISCRIMINATION.md`, `V7_NEXT_LEVERS.md`.
 
----
+## 5. The 7-crop universe
 
-## 6. Anti-levers (don't spend time here)
-- **Engineered dense-timing features** — tested, negative (raw bins already capture it).
-- **Cross-index red-edge ratios** (~2 % gain), **extra date features** (~1 %).
-- **Optuna tuning** — lost to default params on every sibling model.
+| Crop | Type | Cycle (d) | Discriminating signal / risk |
+|---|---|---|---|
+| SOJA | C3 legume, annual | ~130 | safrinha vs MILHO |
+| MILHO | C4 grass, annual | ~140 | C4 vs C3 (easy) |
+| FEIJAO | C3 legume, annual | ~90 | short cycle (easy) |
+| AVEIA | C3 cereal, annual | ~130 | **vs TRIGO — senescence timing / canopy texture** |
+| TRIGO | C3 cereal, annual | ~135 | **vs AVEIA** |
+| ARROZ | C3 grass, flooded | ~145 | flooding (high early NDMI/NDWI + low SAR) |
+| CAFE | perennial, evergreen | ~270 | no annual senescence cycle — separates cleanly |
 
 ---
 
-## 7. Recommended sequence
-1. ~~**ARROZ → 6 crops**~~ ✅ **DONE** (0.941, ARROZ F1 0.99).
-2. ~~**Extended grid (§5.1)**~~ ✅ **DONE** (`N_DEKADS=29`, v7 pipeline).
-3. ~~**CAFE → 7 crops**~~ ✅ **DONE** (0.936, CAFE F1 0.97).
-4. **Recover safrinha SOJA KMLs (§5.4)** and retrain — restore the regressed second-season recall. ← **next**
-5. If AVEIA/TRIGO (the now-dominant error pair) is short of target: **SAR texture (§5.2)** and
-   **abstain calibration (§5.3)**.
+# PART II — UPGRADE PLAN (future tasks)
+
+Ranked by impact. Each says whether the lever is **data**, **signal**, or **infrastructure**.
+
+## Obstacle 1 — Generalization: single-year, single-region *(data — highest real-world value)*
+Held-out 0.95–0.98 is honest but measured **within one crop-year and one agro-climatic zone**. No
+architecture change fixes this — only more diverse labels. **The good news: they already exist on
+disk.** The `culturas/` KML library holds **~416 k usable fields** (only ~1.9 % extracted), and the
+*unused* pool is exactly what we're short on:
+
+- **Temporal:** the pool is **2024-dominant** (276 k in 2024 vs 139 k in 2025) — a full second
+  crop-year, unextracted.
+- **Geographic:** ~**37 % is outside** the S-Brazil cluster (far-South 14 %, SP/MS 12 %, Cerrado 7 %,
+  North 4 %); CAFE's pool is largely the SP/MS + Cerrado coffee belt.
+
+**Per-crop unused supply:** SOJA 158 k, MILHO 125 k, TRIGO 66 k, CAFE 40 k, FEIJAO 10 k — abundant;
+**ARROZ 5 k and AVEIA 2.8 k are the only constrained crops** (and more AVEIA won't fix AVEIA↔TRIGO —
+that's signal, not volume).
+
+**Plan:**
+1. **Data-quality gates:** drop `plantio_nan` (≈12 k CAFE files), reject junk planting years
+   (2000/2099/…), de-dupe by `field_id` (crop + numeric id; note filenames are accented `CAFÉ_`/`FEIJÃO_`
+   but the DB stores ASCII — the pipeline normalizes, new tooling must too).
+2. **2024 pilot batch** (~5 k, stratified by `crop × region`) → extract with the fixed pipeline into a
+   new DB, retrain, run **leave-one-year-out** (train 2024 / test 2025 and vice-versa).
+3. **Full stratified expansion** (~2.5–3 k/crop, bounded by ARROZ/AVEIA; ~19 k total) if the pilot holds.
+4. **Standing held-out-year and held-out-region metrics** in the trainer report — success = accuracy
+   holds across years/regions, not a higher single-split number.
+
+## Obstacle 2 — AVEIA↔TRIGO residual *(signal)*
+Now 0.90/0.90 (swaps 38) after the resolution fix, still the dominant error budget in the 7-crop
+model. Prior work proved optical features are information-limited here, so the lever is a **physically
+orthogonal signal**, not a better model on the same features:
+- **SAR texture (GLCM).** Oats' open panicle vs wheat's compact spike differ in canopy *structure* →
+  radar backscatter texture. The old blocker (SAR null) is gone; what's missing is a **raster/GLCM
+  path** (Process API) computing contrast/homogeneity/entropy over flowering→maturity. De-risk on the
+  matched AVEIA/TRIGO pilot before any full re-extraction.
+- **Per-pair abstain calibration** — route low-confidence AVEIA↔TRIGO to `NAO_CLASSIFICAVEL` rather
+  than one global threshold, so easy crops keep coverage. (See `V7_NEXT_LEVERS.md` for the full trail.)
+
+## Obstacle 3 — Safrinha (second-season) SOJA *(data)*
+`features_v8` matched the same field set as the old v6_ext, which had only 633/777 SOJA — the ~144
+missing are disproportionately second-season, so held-out safrinha recall sits at ~0.63 (OOF, n=32).
+**SOJA→MILHO confusion is 0** in all three models, so the economic risk is contained. Recover the
+missing SOJA KMLs from `culturas/` (v6 sourced them outside `dataset_split/train`), extract over the
+v7 grid, retrain. Low effort, high confidence. Also grow the safrinha *test* set beyond n≈16.
+
+## Obstacle 4 — Serving hardening *(infrastructure)*
+- **No silent-null rows:** a 400/empty API response must be a logged failure, never a stored
+  `dekads_covered=0` row (the resolution fix makes this rare, but the guard prevents recurrence).
+- **Serving guard:** inference on an all-null / uncovered feature row must return `NAO_CLASSIFICAVEL`,
+  never a confident guess.
+- **Coverage report** after each extraction: N fields, N with `dekads_covered=0`, failure rate by
+  area bucket — so a regression like the resolution bug is caught immediately.
+- **Inference service** applying `selected_features.json` + model + `abstain_policy.json`; monitor
+  MILHO precision and the AVEIA/TRIGO / ARROZ confusions in the field.
+
+## Cross-cutting (independent of crop count)
+- **Phenology-normalized resampling** — resample every field onto a fixed number of *phenological-time*
+  steps (0–100 % of cycle) so FEIJAO (90 d), TRIGO (135 d) and CAFE (270 d) share one comparable
+  schema and timing features become directly cross-crop. The principled long-term grid design (more
+  work than the current fixed `N_DEKADS=29`).
+- **Rotate the hardcoded Sentinel Hub credentials** in `src/data_ingestion/request_sentinel_v1.py`
+  (committed `client_id`/`client_secret`) into an env var.
+
+## Anti-levers (don't spend time here)
+- Engineered dense-timing / senescence-shape features — tested negative.
+- Extra cross-index red-edge ratios (~2 %), extra date features (~1 %).
+- Optuna / hyperparameter tuning — lost to defaults on every sibling model.
+- Treating SAR as null/useless — it contributes ~14.5 % of gain.
+
+## Recommended sequence
+1. ~~Resolution fix + re-extract (`features_v8`) + retrain 5/6/7~~ ✅ **DONE 2026-07-07** — promoted.
+2. **Recover safrinha SOJA KMLs** (Obstacle 3) — smallest, high-value.
+3. **Serving guards** (Obstacle 4) before any large new extraction.
+4. **2024 + out-of-region data upgrade** (Obstacle 1) with held-out-year/region eval — the biggest
+   real-world-accuracy win.
+5. **SAR texture + per-pair abstain** (Obstacle 2) if AVEIA/TRIGO is still short of target.
+
+---
+
+*Deep-dive appendices (unchanged): `AVEIA_TRIGO_DISCRIMINATION.md`, `V7_NEXT_LEVERS.md`,
+`SECOND_SEASON_SOJA_RESULTS.md`. Reproducibility: `best_models/README.md` +
+`best_models/datasets/MANIFEST.json`.*

@@ -1,0 +1,38 @@
+{
+  "accuracy": 0.9519,
+  "f1_macro": 0.9521,
+  "n_test": 1373,
+  "season_diagnostic": {
+    "soja_total": 216,
+    "soja_main_season": 200,
+    "soja_second_season": 16,
+    "soja_main_recall": 0.98,
+    "soja_second_season_recall": 0.6875,
+    "soja_to_milho": 0,
+    "milho_to_soja": 3,
+    "second_season_soja_to_milho": 0
+  },
+  "per_class": {
+    "ARROZ": {
+      "recall": 0.98
+    },
+    "AVEIA": {
+      "recall": 0.92
+    },
+    "CAFE": {
+      "recall": 0.97
+    },
+    "FEIJAO": {
+      "recall": 1.0
+    },
+    "MILHO": {
+      "recall": 0.956
+    },
+    "SOJA": {
+      "recall": 0.9583
+    },
+    "TRIGO": {
+      "recall": 0.885
+    }
+  }
+}

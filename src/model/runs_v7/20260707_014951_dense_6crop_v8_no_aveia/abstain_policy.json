@@ -1,0 +1,96 @@
+{
+  "metric": "max_softmax_probability",
+  "abstain_label": "NAO_CLASSIFICAVEL",
+  "rule": "predict crop only if max class probability >= threshold, else abstain",
+  "target_covered_accuracy": 0.93,
+  "threshold": 0.3,
+  "coverage_at_threshold": 1.0,
+  "covered_accuracy_at_threshold": 0.9815,
+  "soja_milho_accuracy_at_threshold": 0.9586,
+  "sweep": [
+    {
+      "threshold": 0.3,
+      "coverage": 1.0,
+      "covered_accuracy": 0.9815,
+      "soja_milho_accuracy": 0.9586
+    },
+    {
+      "threshold": 0.35,
+      "coverage": 0.9996,
+      "covered_accuracy": 0.9819,
+      "soja_milho_accuracy": 0.9591
+    },
+    {
+      "threshold": 0.4,
+      "coverage": 0.9988,
+      "covered_accuracy": 0.9825,
+      "soja_milho_accuracy": 0.9606
+    },
+    {
+      "threshold": 0.45,
+      "coverage": 0.9974,
+      "covered_accuracy": 0.9833,
+      "soja_milho_accuracy": 0.9621
+    },
+    {
+      "threshold": 0.5,
+      "coverage": 0.9952,
+      "covered_accuracy": 0.9846,
+      "soja_milho_accuracy": 0.9642
+    },
+    {
+      "threshold": 0.55,
+      "coverage": 0.9924,
+      "covered_accuracy": 0.986,
+      "soja_milho_accuracy": 0.9673
+    },
+    {
+      "threshold": 0.6,
+      "coverage": 0.9883,
+      "covered_accuracy": 0.9874,
+      "soja_milho_accuracy": 0.9704
+    },
+    {
+      "threshold": 0.65,
+      "coverage": 0.9841,
+      "covered_accuracy": 0.9894,
+      "soja_milho_accuracy": 0.9757
+    },
+    {
+      "threshold": 0.7,
+      "coverage": 0.9791,
+      "covered_accuracy": 0.991,
+      "soja_milho_accuracy": 0.9789
+    },
+    {
+      "threshold": 0.75,
+      "coverage": 0.9749,
+      "covered_accuracy": 0.992,
+      "soja_milho_accuracy": 0.9815
+    },
+    {
+      "threshold": 0.8,
+      "coverage": 0.9698,
+      "covered_accuracy": 0.993,
+      "soja_milho_accuracy": 0.9836
+    },
+    {
+      "threshold": 0.85,
+      "coverage": 0.9624,
+      "covered_accuracy": 0.9946,
+      "soja_milho_accuracy": 0.9874
+    },
+    {
+      "threshold": 0.9,
+      "coverage": 0.9493,
+      "covered_accuracy": 0.9956,
+      "soja_milho_accuracy": 0.9894
+    },
+    {
+      "threshold": 0.95,
+      "coverage": 0.926,
+      "covered_accuracy": 0.998,
+      "soja_milho_accuracy": 0.9945
+    }
+  ]
+}

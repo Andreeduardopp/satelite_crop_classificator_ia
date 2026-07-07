@@ -65,11 +65,18 @@ shows up in **radar backscatter texture**, a signal physically *orthogonal* to t
 indices. That orthogonality is why it could add beyond the 0.87 optical ceiling.
 
 ### Two problems with SAR today
-1. **~90 % null in dekadal bins.** Sentinel-1 revisits ~6–12 days, so most P10D bins have no
-   pass. Fix: aggregate SAR on a **coarser grid (P20–P30D)** so every bin has ≥1 acquisition.
+> ⚠️ **Correction (2026-07-06):** problem #1 below is **obsolete**. Re-measured on the current
+> `features_v6_ext` grid, SAR is only **~16 % null** (12 % among well-covered fields), not 90 %,
+> and SAR levels already contribute **14.5 % of the 7-crop model's gain** (`RVI_mean_d18` = #3
+> feature). The dense pipeline's SAR sampling already solved the null problem. **Only problem #2
+> (no texture) remains** — that is now the whole SAR lever. See `STATUS_AND_ROADMAP.md` (Part I §3, Part II Obstacle 2).
+
+1. ~~**~90 % null in dekadal bins.**~~ *(obsolete — see correction above; SAR is ~16 % null on the
+   v6/v7 dense grid, the 90 % figure was the v5/stage-era number.)*
 2. **Only basic stats.** The pipeline computes VV/VH/CR/RVI means — no texture. Structure
    lives in **spatial texture** (GLCM contrast / homogeneity / entropy) and polarimetric
-   ratios, which need the **raster** (Process API), not the Statistical API.
+   ratios, which need the **raster** (Process API), not the Statistical API. **This is the
+   remaining lever.**
 
 ### What to build
 - Coarsen the SAR aggregation grid (cheap config change) to kill the null rate.

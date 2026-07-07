@@ -1,169 +1,66 @@
 {
-  "generated_utc": "2026-07-05T18:16:08Z",
-  "description": "Byte-exact snapshot of the train/test feature databases that produced the best_models. Each model is bound to the DB (and feature schema) listed under \"consumed_by\". See DATASETS.md for the full narrative.",
+  "generated_utc": "2026-07-07T05:01:26Z",
+  "description": "Resolution-fixed re-extraction (features_v8). All three promoted models (5/6/7-crop) train on features_v8.db and are held-out-tested on features_v8_test.db; they differ only by which crops are excluded at load. Supersedes the 1-pixel features_v6/v6_ext snapshot. See DATASETS.md.",
+  "pipeline": "phenology_feature_pipeline_v7.py (29-dekad extended grid, degree-correct resolution)",
   "source_table": "phenology_features",
+  "models": {
+    "5_culturas_no_aveia": {
+      "crops": [
+        "ARROZ",
+        "FEIJAO",
+        "MILHO",
+        "SOJA",
+        "TRIGO"
+      ],
+      "exclude": [
+        "AVEIA",
+        "CAFE"
+      ]
+    },
+    "6_culturas_no_aveia": {
+      "crops": [
+        "ARROZ",
+        "CAFE",
+        "FEIJAO",
+        "MILHO",
+        "SOJA",
+        "TRIGO"
+      ],
+      "exclude": [
+        "AVEIA"
+      ]
+    },
+    "7_culturas_cafe": {
+      "crops": [
+        "ARROZ",
+        "AVEIA",
+        "CAFE",
+        "FEIJAO",
+        "MILHO",
+        "SOJA",
+        "TRIGO"
+      ],
+      "exclude": []
+    }
+  },
   "datasets": [
     {
-      "file": "datasets/features_v6.db",
+      "file": "datasets/features_v8.db",
       "role": "train",
-      "source_path_local": "src/data/features_v6/features.db",
-      "consumed_by": [
-        "5_culturas_no_aveia",
-        "6_culturas_arroz"
-      ],
-      "pipeline": "phenology_feature_pipeline_v6.py",
-      "grid": {
-        "n_dekads": 17,
-        "dekadal_window_days": [
-          -15,
-          155
-        ],
-        "fine_grid": "P5D over flowering->maturity (per-crop, planting-anchored)"
-      },
-      "size_bytes": 49209344,
-      "md5": "903e3a5cc52fb6ee3c2476b496644c69",
-      "n_rows": 5887,
-      "n_cols": 1053,
-      "n_rows_effective_min_cov3": 5586,
-      "crop_counts": {
-        "ARROZ": 637,
-        "AVEIA": 1200,
-        "FEIJAO": 1016,
-        "MILHO": 1200,
-        "SOJA": 777,
-        "TRIGO": 1057
-      },
-      "planting_date_min": "2024-02-01",
-      "planting_date_max": "2026-02-24",
-      "planting_year_counts": {
-        "2024": 81,
-        "2025": 5804,
-        "2026": 2
-      },
-      "planting_month_counts": {
-        "1": 408,
-        "2": 1008,
-        "3": 193,
-        "4": 187,
-        "5": 745,
-        "6": 1498,
-        "7": 59,
-        "8": 308,
-        "9": 790,
-        "10": 619,
-        "11": 67,
-        "12": 5
-      },
-      "latitude_bbox": [
-        -33.533,
-        3.4072
-      ],
-      "longitude_bbox": [
-        -63.0838,
-        -36.0859
-      ],
-      "area_hectares": {
-        "min": 0.02,
-        "median": 8.38,
-        "mean": 18.77,
-        "max": 1826.44
-      },
-      "dekads_covered": {
-        "min": 0,
-        "median": 17,
-        "max": 17
-      }
-    },
-    {
-      "file": "datasets/features_test_v6.db",
-      "role": "test",
-      "source_path_local": "src/data/features_test_v6/features.db",
-      "consumed_by": [
-        "5_culturas_no_aveia",
-        "6_culturas_arroz"
-      ],
-      "pipeline": "phenology_feature_pipeline_v6.py",
-      "grid": {
-        "n_dekads": 17,
-        "dekadal_window_days": [
-          -15,
-          155
-        ],
-        "fine_grid": "P5D over flowering->maturity (per-crop, planting-anchored)"
-      },
-      "size_bytes": 10182656,
-      "md5": "1ad82ce35a41336d03804332f9509ae7",
-      "n_rows": 1216,
-      "n_cols": 1053,
-      "n_rows_effective_min_cov3": 1149,
-      "crop_counts": {
-        "ARROZ": 200,
-        "AVEIA": 200,
-        "FEIJAO": 200,
-        "MILHO": 200,
-        "SOJA": 216,
-        "TRIGO": 200
-      },
-      "planting_date_min": "2024-01-05",
-      "planting_date_max": "2025-11-01",
-      "planting_year_counts": {
-        "2024": 8,
-        "2025": 1208
-      },
-      "planting_month_counts": {
-        "1": 122,
-        "2": 255,
-        "3": 39,
-        "4": 27,
-        "5": 230,
-        "6": 145,
-        "7": 4,
-        "8": 31,
-        "9": 162,
-        "10": 188,
-        "11": 13
-      },
-      "latitude_bbox": [
-        -33.6864,
-        -2.7342
-      ],
-      "longitude_bbox": [
-        -61.1199,
-        -37.6176
-      ],
-      "area_hectares": {
-        "min": 0.09,
-        "median": 9.18,
-        "mean": 20.04,
-        "max": 1634.33
-      },
-      "dekads_covered": {
-        "min": 0,
-        "median": 17,
-        "max": 17
-      }
-    },
-    {
-      "file": "datasets/features_v6_ext.db",
-      "role": "train",
-      "source_path_local": "src/data/features_v6_ext/features.db",
-      "consumed_by": [
-        "7_culturas_cafe"
-      ],
-      "pipeline": "phenology_feature_pipeline_v7.py",
+      "source_path_local": "src/data/features_v8/features.db",
       "grid": {
         "n_dekads": 29,
         "dekadal_window_days": [
           -15,
           275
-        ],
-        "fine_grid": "P5D over flowering->maturity (per-crop, planting-anchored)"
+        ]
       },
-      "size_bytes": 74964992,
-      "md5": "226ac84a88cc8911bb358f90f1e81f0b",
+      "size_bytes": 79409152,
+      "md5": "9274c050fb5abc2ed91876df81c3eb00",
       "n_rows": 6174,
       "n_cols": 1485,
-      "n_rows_effective_min_cov3": 5891,
+      "n_rows_dekads_covered_0": 0,
+      "n_rows_effective_min_cov3": 6174,
       "crop_counts": {
         "ARROZ": 637,
         "AVEIA": 1200,
@@ -173,26 +70,10 @@
         "SOJA": 633,
         "TRIGO": 1001
       },
-      "planting_date_min": "2024-02-01",
-      "planting_date_max": "2025-12-31",
-      "planting_year_counts": {
-        "2024": 4,
-        "2025": 6170
-      },
-      "planting_month_counts": {
-        "1": 407,
-        "2": 942,
-        "3": 229,
-        "4": 201,
-        "5": 737,
-        "6": 1480,
-        "7": 66,
-        "8": 378,
-        "9": 977,
-        "10": 678,
-        "11": 71,
-        "12": 8
-      },
+      "planting_date_range": [
+        "2024-02-01",
+        "2025-12-31"
+      ],
       "latitude_bbox": [
         -33.533,
         3.3178
@@ -206,34 +87,25 @@
         "median": 7.85,
         "mean": 17.37,
         "max": 1826.44
-      },
-      "dekads_covered": {
-        "min": 0,
-        "median": 29,
-        "max": 29
       }
     },
     {
-      "file": "datasets/features_test_v6_ext.db",
+      "file": "datasets/features_v8_test.db",
       "role": "test",
-      "source_path_local": "src/data/features_test_v6_ext/features.db",
-      "consumed_by": [
-        "7_culturas_cafe"
-      ],
-      "pipeline": "phenology_feature_pipeline_v7.py",
+      "source_path_local": "src/data/features_v8_test/features.db",
       "grid": {
         "n_dekads": 29,
         "dekadal_window_days": [
           -15,
           275
-        ],
-        "fine_grid": "P5D over flowering->maturity (per-crop, planting-anchored)"
+        ]
       },
-      "size_bytes": 16719872,
-      "md5": "ddd34da58b2d0bdcf6666b0c181ca874",
+      "size_bytes": 17612800,
+      "md5": "0b92fcc399747471095ae1fd9c66e09c",
       "n_rows": 1373,
       "n_cols": 1485,
-      "n_rows_effective_min_cov3": 1310,
+      "n_rows_dekads_covered_0": 0,
+      "n_rows_effective_min_cov3": 1373,
       "crop_counts": {
         "ARROZ": 200,
         "AVEIA": 200,
@@ -243,28 +115,10 @@
         "SOJA": 216,
         "TRIGO": 200
       },
-      "planting_date_min": "2021-09-14",
-      "planting_date_max": "2025-12-05",
-      "planting_year_counts": {
-        "2021": 1,
-        "2023": 8,
-        "2024": 47,
-        "2025": 1317
-      },
-      "planting_month_counts": {
-        "1": 123,
-        "2": 238,
-        "3": 67,
-        "4": 42,
-        "5": 241,
-        "6": 152,
-        "7": 7,
-        "8": 54,
-        "9": 216,
-        "10": 215,
-        "11": 15,
-        "12": 3
-      },
+      "planting_date_range": [
+        "2021-09-14",
+        "2025-12-05"
+      ],
       "latitude_bbox": [
         -33.6864,
         -2.7342
@@ -278,11 +132,6 @@
         "median": 7.75,
         "mean": 17.88,
         "max": 1634.33
-      },
-      "dekads_covered": {
-        "min": 0,
-        "median": 29,
-        "max": 29
       }
     }
   ]
