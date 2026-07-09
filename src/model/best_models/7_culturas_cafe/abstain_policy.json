@@ -3,94 +3,101 @@
   "abstain_label": "NAO_CLASSIFICAVEL",
   "rule": "predict crop only if max class probability >= threshold, else abstain",
   "target_covered_accuracy": 0.93,
-  "threshold": 0.3,
-  "coverage_at_threshold": 0.9997,
-  "covered_accuracy_at_threshold": 0.9553,
-  "soja_milho_accuracy_at_threshold": 0.9553,
+  "threshold": 0.9,
+  "coverage_at_threshold": 0.9999,
+  "covered_accuracy_at_threshold": 0.9588,
+  "soja_milho_accuracy_at_threshold": 0.9416,
   "sweep": [
     {
       "threshold": 0.3,
-      "coverage": 0.9997,
-      "covered_accuracy": 0.9553,
-      "soja_milho_accuracy": 0.9553
+      "coverage": 0.9999,
+      "covered_accuracy": 0.9588,
+      "soja_milho_accuracy": 0.9416
     },
     {
       "threshold": 0.35,
-      "coverage": 0.999,
-      "covered_accuracy": 0.9557,
-      "soja_milho_accuracy": 0.9558
+      "coverage": 0.9998,
+      "covered_accuracy": 0.9589,
+      "soja_milho_accuracy": 0.9419
     },
     {
       "threshold": 0.4,
-      "coverage": 0.9987,
-      "covered_accuracy": 0.9559,
-      "soja_milho_accuracy": 0.9558
+      "coverage": 0.9992,
+      "covered_accuracy": 0.9594,
+      "soja_milho_accuracy": 0.9429
     },
     {
       "threshold": 0.45,
-      "coverage": 0.9981,
-      "covered_accuracy": 0.956,
-      "soja_milho_accuracy": 0.9558
+      "coverage": 0.9984,
+      "covered_accuracy": 0.9597,
+      "soja_milho_accuracy": 0.9434
     },
     {
       "threshold": 0.5,
-      "coverage": 0.9943,
-      "covered_accuracy": 0.9576,
-      "soja_milho_accuracy": 0.9587
+      "coverage": 0.9966,
+      "covered_accuracy": 0.9606,
+      "soja_milho_accuracy": 0.945
     },
     {
       "threshold": 0.55,
-      "coverage": 0.9866,
-      "covered_accuracy": 0.9613,
-      "soja_milho_accuracy": 0.9602
+      "coverage": 0.9889,
+      "covered_accuracy": 0.9642,
+      "soja_milho_accuracy": 0.9485
     },
     {
       "threshold": 0.6,
-      "coverage": 0.978,
-      "covered_accuracy": 0.9641,
-      "soja_milho_accuracy": 0.9638
+      "coverage": 0.9808,
+      "covered_accuracy": 0.9674,
+      "soja_milho_accuracy": 0.9528
     },
     {
       "threshold": 0.65,
-      "coverage": 0.9691,
-      "covered_accuracy": 0.9667,
-      "soja_milho_accuracy": 0.9669
+      "coverage": 0.9735,
+      "covered_accuracy": 0.9698,
+      "soja_milho_accuracy": 0.9559
     },
     {
       "threshold": 0.7,
-      "coverage": 0.958,
-      "covered_accuracy": 0.9711,
-      "soja_milho_accuracy": 0.9727
+      "coverage": 0.9652,
+      "covered_accuracy": 0.9726,
+      "soja_milho_accuracy": 0.9588
     },
     {
       "threshold": 0.75,
-      "coverage": 0.9444,
-      "covered_accuracy": 0.9755,
-      "soja_milho_accuracy": 0.9781
+      "coverage": 0.9549,
+      "covered_accuracy": 0.9758,
+      "soja_milho_accuracy": 0.963
     },
     {
       "threshold": 0.8,
-      "coverage": 0.931,
-      "covered_accuracy": 0.9781,
-      "soja_milho_accuracy": 0.9813
+      "coverage": 0.942,
+      "covered_accuracy": 0.9795,
+      "soja_milho_accuracy": 0.9673
     },
     {
       "threshold": 0.85,
-      "coverage": 0.9135,
-      "covered_accuracy": 0.9819,
-      "soja_milho_accuracy": 0.9857
+      "coverage": 0.9256,
+      "covered_accuracy": 0.9828,
+      "soja_milho_accuracy": 0.9738
     },
     {
       "threshold": 0.9,
-      "coverage": 0.8861,
-      "covered_accuracy": 0.9876,
-      "soja_milho_accuracy": 0.99
+      "coverage": 0.903,
+      "covered_accuracy": 0.9862,
+      "soja_milho_accuracy": 0.9795
     },
     {
       "threshold": 0.95,
-      "coverage": 0.8361,
-      "covered_accuracy": 0.9911,
-      "soja_milho_accuracy": 0.9939
+      "coverage": 0.8623,
+      "covered_accuracy": 0.9923,
+      "soja_milho_accuracy": 0.9878
     }
-  ]
+  ],
+  "calibration": {
+    "source": "bench2026 (kml_test_2026, most-recent completed seasons)",
+    "date": "2026-07-09",
+    "coverage_at_threshold": 0.928,
+    "covered_accuracy_at_threshold": 0.9784,
+    "note": "OOF-derived threshold 0.30 is a no-op out of distribution; serving must use this bench-calibrated value"
+  }
 }

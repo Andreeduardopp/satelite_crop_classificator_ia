@@ -58,3 +58,6 @@ processadas/
 
 # Virtual environments
 .venv
+
+# Dataset snapshots too large for GitHub (kept local; MD5 in STATUS_AND_ROADMAP.md)
+src/model/best_models/datasets/features_v10_train.zip

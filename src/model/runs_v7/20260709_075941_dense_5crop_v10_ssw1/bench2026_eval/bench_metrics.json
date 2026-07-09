@@ -1,0 +1,102 @@
+{
+  "benchmark": "kml_test_2026 (features_test_2026; TRIGO/AVEIA pending December batch)",
+  "accuracy": 0.94,
+  "f1_macro": 0.9409,
+  "n": 200,
+  "per_class": {
+    "ARROZ": {
+      "precision": 1.0,
+      "recall": 0.94
+    },
+    "FEIJAO": {
+      "precision": 1.0,
+      "recall": 0.96
+    },
+    "MILHO": {
+      "precision": 0.902,
+      "recall": 0.92
+    },
+    "SOJA": {
+      "precision": 0.8704,
+      "recall": 0.94
+    }
+  },
+  "confusion_matrix": {
+    "labels": [
+      "ARROZ",
+      "FEIJAO",
+      "MILHO",
+      "SOJA",
+      "TRIGO"
+    ],
+    "rows_true": [
+      [
+        47,
+        0,
+        0,
+        3,
+        0
+      ],
+      [
+        0,
+        48,
+        2,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        46,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        3,
+        47,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "abstain_sweep": [
+    {
+      "threshold": 0.3,
+      "coverage": 1.0,
+      "covered_accuracy": 0.94
+    },
+    {
+      "threshold": 0.5,
+      "coverage": 1.0,
+      "covered_accuracy": 0.94
+    },
+    {
+      "threshold": 0.7,
+      "coverage": 0.98,
+      "covered_accuracy": 0.949
+    },
+    {
+      "threshold": 0.8,
+      "coverage": 0.96,
+      "covered_accuracy": 0.9531
+    },
+    {
+      "threshold": 0.9,
+      "coverage": 0.915,
+      "covered_accuracy": 0.9727
+    },
+    {
+      "threshold": 0.95,
+      "coverage": 0.87,
+      "covered_accuracy": 0.9828
+    }
+  ]
+}

@@ -71,6 +71,9 @@ def _load(db_path, exclude_crops=None, min_cov=3, second_season_months=None, den
 
     feat_cols = [c for c in df.columns if c not in NON_FEATURE]
     X = df[feat_cols].astype(np.float32)
+    # corrupted SAR responses can carry inf (log-scaled zero backscatter);
+    # map to NaN so XGBoost treats them as missing instead of aborting
+    X = X.replace([np.inf, -np.inf], np.nan)
     X = add_null_indicators(X)
 
     le = LabelEncoder()
@@ -112,10 +115,14 @@ def evaluate(run_dir, test_db, exclude_crops=None, min_cov=3, dense_timing=False
     proba = model.predict_proba(X)
     y_pred = proba.argmax(axis=1)
 
+    # the test DB may lack some model classes (e.g. the 2026 test set has no TRIGO
+    # until the December batch) — pin labels so report/matrix stay aligned to the model
+    labels = list(range(len(le.classes_)))
     acc = accuracy_score(y, y_pred)
     f1m = f1_score(y, y_pred, average="macro")
     print(f"\nTEST  acc={acc:.4f}  macro-F1={f1m:.4f}  (n={len(y)})")
-    print(classification_report(y, y_pred, target_names=le.classes_))
+    print(classification_report(y, y_pred, labels=labels, target_names=le.classes_,
+                                zero_division=0))
     diag = season_diagnostic(y, y_pred, le, meta)
 
     cls = list(le.classes_)
@@ -125,11 +132,12 @@ def evaluate(run_dir, test_db, exclude_crops=None, min_cov=3, dense_timing=False
         swaps = cm[ai][ti] + cm[ti][ai]
         print(f"AVEIA<->TRIGO swaps: {swaps}  (AVEIA->TRIGO {cm[ai][ti]}, TRIGO->AVEIA {cm[ti][ai]})")
 
+    cm_full = confusion_matrix(y, y_pred, labels=labels)
+    support = cm_full.sum(axis=1)
     out = {"accuracy": round(acc, 4), "f1_macro": round(f1m, 4), "n_test": int(len(y)),
            "season_diagnostic": diag,
-           "per_class": {c: {"recall": round(r, 4)} for c, r in
-                         zip(le.classes_, confusion_matrix(y, y_pred).diagonal() /
-                             confusion_matrix(y, y_pred).sum(axis=1))}}
+           "per_class": {c: {"recall": round(cm_full[i][i] / support[i], 4)}
+                         for i, c in enumerate(le.classes_) if support[i] > 0}}
     os.makedirs(os.path.join(run_dir, "test_eval"), exist_ok=True)
     with open(os.path.join(run_dir, "test_eval", "test_metrics.json"), "w") as f:
         json.dump(out, f, indent=2)

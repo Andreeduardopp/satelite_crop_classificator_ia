@@ -1,0 +1,136 @@
+{
+  "benchmark": "kml_test_2026 (features_test_2026; TRIGO/AVEIA pending December batch)",
+  "accuracy": 0.864,
+  "f1_macro": 0.8663,
+  "n": 250,
+  "per_class": {
+    "ARROZ": {
+      "precision": 1.0,
+      "recall": 0.8
+    },
+    "CAFE": {
+      "precision": 0.9245,
+      "recall": 0.98
+    },
+    "FEIJAO": {
+      "precision": 0.9216,
+      "recall": 0.94
+    },
+    "MILHO": {
+      "precision": 0.9714,
+      "recall": 0.68
+    },
+    "SOJA": {
+      "precision": 0.6479,
+      "recall": 0.92
+    }
+  },
+  "confusion_matrix": {
+    "labels": [
+      "ARROZ",
+      "AVEIA",
+      "CAFE",
+      "FEIJAO",
+      "MILHO",
+      "SOJA",
+      "TRIGO"
+    ],
+    "rows_true": [
+      [
+        40,
+        0,
+        1,
+        0,
+        0,
+        9,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        49,
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1,
+        47,
+        0,
+        2,
+        0
+      ],
+      [
+        0,
+        0,
+        2,
+        0,
+        34,
+        14,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        4,
+        0,
+        46,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "abstain_sweep": [
+    {
+      "threshold": 0.3,
+      "coverage": 1.0,
+      "covered_accuracy": 0.864
+    },
+    {
+      "threshold": 0.5,
+      "coverage": 0.984,
+      "covered_accuracy": 0.8699
+    },
+    {
+      "threshold": 0.7,
+      "coverage": 0.888,
+      "covered_accuracy": 0.9009
+    },
+    {
+      "threshold": 0.8,
+      "coverage": 0.824,
+      "covered_accuracy": 0.9175
+    },
+    {
+      "threshold": 0.9,
+      "coverage": 0.68,
+      "covered_accuracy": 0.9471
+    },
+    {
+      "threshold": 0.95,
+      "coverage": 0.584,
+      "covered_accuracy": 0.9589
+    }
+  ]
+}

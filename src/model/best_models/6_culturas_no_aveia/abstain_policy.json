@@ -3,94 +3,101 @@
   "abstain_label": "NAO_CLASSIFICAVEL",
   "rule": "predict crop only if max class probability >= threshold, else abstain",
   "target_covered_accuracy": 0.93,
-  "threshold": 0.3,
+  "threshold": 0.9,
   "coverage_at_threshold": 1.0,
-  "covered_accuracy_at_threshold": 0.9815,
-  "soja_milho_accuracy_at_threshold": 0.9586,
+  "covered_accuracy_at_threshold": 0.9781,
+  "soja_milho_accuracy_at_threshold": 0.9403,
   "sweep": [
     {
       "threshold": 0.3,
       "coverage": 1.0,
-      "covered_accuracy": 0.9815,
-      "soja_milho_accuracy": 0.9586
+      "covered_accuracy": 0.9781,
+      "soja_milho_accuracy": 0.9403
     },
     {
       "threshold": 0.35,
-      "coverage": 0.9996,
-      "covered_accuracy": 0.9819,
-      "soja_milho_accuracy": 0.9591
+      "coverage": 0.9999,
+      "covered_accuracy": 0.9781,
+      "soja_milho_accuracy": 0.9404
     },
     {
       "threshold": 0.4,
-      "coverage": 0.9988,
-      "covered_accuracy": 0.9825,
-      "soja_milho_accuracy": 0.9606
+      "coverage": 0.9997,
+      "covered_accuracy": 0.9783,
+      "soja_milho_accuracy": 0.9408
     },
     {
       "threshold": 0.45,
-      "coverage": 0.9974,
-      "covered_accuracy": 0.9833,
-      "soja_milho_accuracy": 0.9621
+      "coverage": 0.9987,
+      "covered_accuracy": 0.9788,
+      "soja_milho_accuracy": 0.9421
     },
     {
       "threshold": 0.5,
-      "coverage": 0.9952,
-      "covered_accuracy": 0.9846,
-      "soja_milho_accuracy": 0.9642
+      "coverage": 0.9974,
+      "covered_accuracy": 0.9793,
+      "soja_milho_accuracy": 0.9433
     },
     {
       "threshold": 0.55,
-      "coverage": 0.9924,
-      "covered_accuracy": 0.986,
-      "soja_milho_accuracy": 0.9673
+      "coverage": 0.9935,
+      "covered_accuracy": 0.9811,
+      "soja_milho_accuracy": 0.948
     },
     {
       "threshold": 0.6,
-      "coverage": 0.9883,
-      "covered_accuracy": 0.9874,
-      "soja_milho_accuracy": 0.9704
+      "coverage": 0.9891,
+      "covered_accuracy": 0.9829,
+      "soja_milho_accuracy": 0.9525
     },
     {
       "threshold": 0.65,
-      "coverage": 0.9841,
-      "covered_accuracy": 0.9894,
-      "soja_milho_accuracy": 0.9757
+      "coverage": 0.9849,
+      "covered_accuracy": 0.9848,
+      "soja_milho_accuracy": 0.9576
     },
     {
       "threshold": 0.7,
-      "coverage": 0.9791,
-      "covered_accuracy": 0.991,
-      "soja_milho_accuracy": 0.9789
+      "coverage": 0.9799,
+      "covered_accuracy": 0.987,
+      "soja_milho_accuracy": 0.9638
     },
     {
       "threshold": 0.75,
-      "coverage": 0.9749,
-      "covered_accuracy": 0.992,
-      "soja_milho_accuracy": 0.9815
+      "coverage": 0.9744,
+      "covered_accuracy": 0.9888,
+      "soja_milho_accuracy": 0.9684
     },
     {
       "threshold": 0.8,
-      "coverage": 0.9698,
-      "covered_accuracy": 0.993,
-      "soja_milho_accuracy": 0.9836
+      "coverage": 0.969,
+      "covered_accuracy": 0.9902,
+      "soja_milho_accuracy": 0.9716
     },
     {
       "threshold": 0.85,
-      "coverage": 0.9624,
-      "covered_accuracy": 0.9946,
-      "soja_milho_accuracy": 0.9874
+      "coverage": 0.9609,
+      "covered_accuracy": 0.9915,
+      "soja_milho_accuracy": 0.9752
     },
     {
       "threshold": 0.9,
-      "coverage": 0.9493,
-      "covered_accuracy": 0.9956,
-      "soja_milho_accuracy": 0.9894
+      "coverage": 0.9491,
+      "covered_accuracy": 0.9933,
+      "soja_milho_accuracy": 0.9801
     },
     {
       "threshold": 0.95,
-      "coverage": 0.926,
-      "covered_accuracy": 0.998,
-      "soja_milho_accuracy": 0.9945
+      "coverage": 0.9272,
+      "covered_accuracy": 0.9959,
+      "soja_milho_accuracy": 0.9878
     }
-  ]
+  ],
+  "calibration": {
+    "source": "bench2026 (kml_test_2026, most-recent completed seasons)",
+    "date": "2026-07-09",
+    "coverage_at_threshold": 0.932,
+    "covered_accuracy_at_threshold": 0.9785,
+    "note": "OOF-derived threshold 0.30 is a no-op out of distribution; serving must use this bench-calibrated value"
+  }
 }

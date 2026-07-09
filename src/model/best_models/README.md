@@ -1,68 +1,93 @@
-# Best crop-classifier models (5 / 6 / 7 cultures)
+# Best crop-classifier models (5 / 6 / 7 cultures) — v10
 
-Flagship XGBoost dense models, one per crop count. Each folder is a full copy of its training
-run (model + selected features + abstain policy + metrics + plots). All three were re-extracted
-and retrained on **`features_v8`** — the resolution-bug-fixed data (2026-07-07).
+Flagship XGBoost dense models, one per crop count, **promoted 2026-07-09** (the v10
+recent-years generation; supersedes v8). Each folder is a full copy of its training run
+(model + selected features + calibrated abstain policy + metrics + evals + plots).
+
+All three train on **`features_v10_train`** — a balanced, **2025/2026-only** pool
+(16,623 fields: 2,500/crop, AVEIA 1,623; zero 2024 rows; composition + kept ids in
+`src/data/features_v10_train/build_manifest.json`, built by `scripts/build_v10_train.py`).
+Design and full results: [`../PLAN_V10_2025_2026.md`](../PLAN_V10_2025_2026.md).
 
 > ⚠️ **A model is bound to its `selected_features.json`.** At inference, extract features with
-> **`phenology_feature_pipeline_v7.py`** (all three models now use the same 29-dekad extended grid),
-> anchored at the field's planting date, then reindex to the model's own `selected_features.json`.
+> **`phenology_feature_pipeline_v7.py`** (29-dekad extended grid), anchored at the field's
+> planting date, then reindex to the model's own `selected_features.json`.
 
 ## The three models
 
-| Folder | Cultures | Held-out test | Source run |
-|---|---|---|---|
-| `5_culturas_no_aveia/` | ARROZ, FEIJAO, MILHO, SOJA, TRIGO | **0.983** acc / 0.982 F1 (n=973) | `20260707_014558_dense_5crop_v8_no_aveia_no_cafe` |
-| `6_culturas_no_aveia/` | + CAFE | **0.979** acc / 0.978 F1 (n=1173) | `20260707_014951_dense_6crop_v8_no_aveia` |
-| `7_culturas_cafe/` | + AVEIA (all 7) | **0.952** acc / 0.952 F1 (n=1373) | `20260707_013253_dense_7crop_v8_resfix` |
+| Folder | Cultures | bench2026 (gate) | Held-out v8 | Source run |
+|---|---|--:|--:|---|
+| `5_culturas_no_aveia/` | ARROZ, FEIJAO, MILHO, SOJA, TRIGO | **0.940** (n=200) | 0.981 (n=973) | `20260709_075941_dense_5crop_v10_ssw1` |
+| `6_culturas_no_aveia/` | + CAFE | **0.956** (n=250) | 0.977 (n=1173) | `20260709_091712_dense_6crop_v10_ssw1` |
+| `7_culturas_cafe/` | + AVEIA (all 7) | **0.956** (n=250) | 0.955 (n=1373) | `20260709_113112_dense_7crop_v10_ssw1` |
 
-All trained by `train_xgboost_v7.py` (weighted 5-fold OOF CV, class balance, safrinha-SOJA up-weight,
-global abstain gate, season-stratified diagnostic) on the same DBs, differing only by
-`--exclude-crops` (5-crop excludes AVEIA + CAFE; 6-crop excludes AVEIA; 7-crop excludes none).
+All trained by `train_xgboost_v7.py` (weighted 5-fold OOF CV, class balance, **safrinha
+up-weight 1×** — real safrinha data replaced the old 6× crutch, global abstain gate) on the same
+DB, differing only by `--exclude-crops`. v8 promoted models scored **0.850/0.856/0.864** on the
+same bench2026 — the v10 gain is +9–10 pts where it counts: fields the models never saw, from
+the season production will actually serve.
 
-**The ladder is deliberate:** AVEIA↔TRIGO is the whole residual error budget, so dropping AVEIA lets
-the 5-/6-crop models reach ~0.98 (and TRIGO F1 1.00). Deployments that don't need oats should use them.
+## Per-class recall
 
-> 📂 **Full status, dataset provenance/variability, and the upgrade plan are in
-> [`../STATUS_AND_ROADMAP.md`](../STATUS_AND_ROADMAP.md).** The exact training/test data is snapshotted
-> byte-for-byte in [`datasets/`](datasets/) (`features_v8.db`, `features_v8_test.db`) with checksums +
-> per-crop/date/geo stats in [`datasets/MANIFEST.json`](datasets/MANIFEST.json).
+| Culture | bench2026 (5/6/7-crop) | held-out v8 (5/6/7-crop) |
+|---|---|---|
+| ARROZ | 0.94 / 0.94 / 0.94 | 0.99 / 0.99 / 0.99 |
+| FEIJAO | 0.96 / 0.96 / 0.96 | 0.99 / 0.99 / 0.99 |
+| MILHO | 0.92 / 0.94 / 0.94 | 0.94 / 0.95 / 0.95 |
+| SOJA | 0.94 / 0.94 / 0.94 | 0.98 / 0.98 / 0.98 |
+| CAFE | — / **1.00** / **1.00** | — / 0.95 / 0.95 |
+| TRIGO | *December* | 1.00 / 1.00 / 0.94 |
+| AVEIA | *December* | — / — / 0.88 |
 
-## The pipeline
+Residual bench2026 errors: safrinha SOJA↔MILHO (3+3 swaps) and 3 ARROZ→SOJA. No model ever
+hallucinated a winter crop (TRIGO/AVEIA) on the summer benchmark fields. 7-crop AVEIA↔TRIGO
+on held-out: 35 swaps (v8: 38) — unchanged until the December two-winter batch.
 
-`phenology_feature_pipeline_v7.py` issues one Sentinel-Hub Statistical-API request per source and
-aggregates the crop calendar server-side on a hybrid grid: **dekadal (P10D)** over `planting−15 .. +275 d`
-(`N_DEKADS = 29`, covers CAFE's ~270-day cycle) + **fine (P5D)** over flowering→maturity (the
-AVEIA/TRIGO senescence window). Schema ≈ 1485 columns. `resx/resy` are in **degrees** (the 2026-07-07
-fix — the old metres value collapsed every field to ~1 pixel; see STATUS_AND_ROADMAP Part I §2).
+## ⚠️ Serving requirements (mandatory)
 
-## Per-class recall (held-out test)
+Two production-blocking lessons are baked into these models — the serving side MUST implement
+both before `predict_proba`:
 
-| Culture | 5-crop | 6-crop | 7-crop |
-|---|---|---|---|
-| ARROZ | 0.98 | 0.98 | 0.98 |
-| FEIJAO | 0.99 | 0.99 | 1.00 |
-| MILHO | 0.98 | 0.96 | 0.96 |
-| SOJA | 0.96 | 0.96 | 0.96 |
-| TRIGO | **1.00** | **1.00** | 0.89 |
-| CAFE | — | 0.98 | 0.97 |
-| AVEIA | — | — | 0.92 |
+1. **inf→NaN guard.** Real fields can produce `±inf` in SAR columns (zero backscatter → −inf dB:
+   radar shadow / standing water; e.g. `CAFE_520664544-1` reproduces it on every extraction).
+   XGBoost **aborts** on inf input — one such field takes down the request. NaN, by contrast,
+   is handled as missing (it's how the models were trained, via the same guard in
+   `train_xgboost_v7._load`).
+2. **Calibrated abstain threshold.** Each folder's `abstain_policy.json` now ships the
+   bench2026-calibrated `threshold` (**0.80** for 5-crop, **0.90** for 6/7-crop — see the
+   `calibration` block inside). The old OOF-derived 0.30 is a no-op out of distribution: in the
+   original field test it abstained on **zero** of 39 errors.
 
-TRIGO is perfect in the 5-/6-crop models because AVEIA (its one hard confuser) is absent; adding
-AVEIA back in the 7-crop model restores the AVEIA↔TRIGO pair (0.90/0.90 F1, 38 swaps — down from 52
-before the resolution fix). CAFE separates cleanly (F1 0.97).
+```python
+import numpy as np, xgboost as xgb
 
-## Using a model (inference sketch)
+X = features_row.reindex(columns=selected_features)      # missing cols -> NaN, exact order
+X = X.replace([np.inf, -np.inf], np.nan)                 # (1) inf guard — REQUIRED
+model = xgb.XGBClassifier(); model.load_model("xgboost_crop_classifier.json")
+proba = model.predict_proba(X)[0]
+if proba.max() >= policy["threshold"]:                   # (2) calibrated gate — REQUIRED
+    return classes[proba.argmax()]                       # classes: metrics.json -> "classes"
+return "NAO_CLASSIFICAVEL"
+```
 
-1. Extract features with `phenology_feature_pipeline_v7.py`, anchored at the field's planting date.
-2. Reindex the feature row to the model's `selected_features.json` (add any missing column as NaN, in
-   that exact order).
-3. `model = xgb.XGBClassifier(); model.load_model("xgboost_crop_classifier.json")`, then
-   `proba = model.predict_proba(X)`.
-4. Apply `abstain_policy.json`: predict the arg-max crop only if its probability ≥ the policy
-   `threshold`, else return `NAO_CLASSIFICAVEL`. Class order is in `metrics.json` → `classes`.
+Operational effect at these thresholds (measured on bench2026): 5-crop covers 96% of requests
+at 0.953 covered accuracy; 6/7-crop cover ~93% at ~0.978. Also log per request: planting date,
+`dekads_covered`/`fine_covered`, lat/lon and the full probability vector (needed for the next
+recalibration).
 
-`evaluate()` in `train_xgboost_v7.py` is a complete worked example of steps 2–4.
+## The benchmark (promotion gate)
+
+**`kml_test_2026`** — 50/crop from the most recent completed season, frozen 2026-07-09
+(`src/data/kml_test_2026/`, manifest with field_ids; extracted at `src/data/features_test_2026/`).
+SOJA/MILHO/FEIJAO planted Jan–Mar 2026; ARROZ Oct 2025–Feb 2026 (2025/26 rice season); CAFE
+Aug–Oct 2025 (270-day cycle). **TRIGO/AVEIA are sampled+frozen but mid-season — extracted after
+2026-12-01.** Run: `python src/model/eval_bench2026.py <run_dir>`. Bar: ≥0.95 covered accuracy
+at ≥0.85 coverage. Every training sampler must exclude this manifest's field_ids.
+
+The old 2024-heavy `kml_test_sample_250` benchmark is retired (extracted DB, script, and the
+superseded v9 sweep runs deleted 2026-07-09; the zip is kept only for sampler exclusions —
+that story, including the −14 pt year-shift discovery, is in
+`../FIELD_TEST_5CROP_ANALYSIS_AND_PLAN.md` and `../PLAN_V10_2025_2026.md` §5).
 
 ## Files in each folder
 
@@ -70,17 +95,25 @@ before the resolution fix). CAFE separates cleanly (F1 0.97).
 |---|---|
 | `xgboost_crop_classifier.json` | the trained XGBoost model |
 | `selected_features.json` | ordered feature list the model expects |
-| `abstain_policy.json` | probability threshold + coverage/accuracy sweep for the abstain gate |
-| `metrics.json` | full training metrics, class order, config, OOF season diagnostic |
-| `test_eval/test_metrics.json` | held-out test accuracy / macro-F1 / per-class recall |
+| `abstain_policy.json` | **bench2026-calibrated** threshold (+ OOF sweep + calibration block) |
+| `metrics.json` | training metrics, class order, config, OOF season diagnostic |
+| `test_eval/test_metrics.json` | bench2026 result (the official gate eval) |
+| `test_eval_v8heldout/test_metrics.json` | regression eval on the old v8 held-out set |
+| `bench2026_eval/bench_metrics.json` | bench2026 with confusion matrix + abstain sweep |
 | `best_params.json` | XGBoost hyperparameters used |
-| `confusion_matrix.png`, `feature_importance.png`, `abstain_curve.png` | diagnostic plots |
+| `confusion_matrix.png`, `feature_importance.png`, `abstain_curve.png` | training diagnostics |
 
 ## Caveats
 
-- **Safrinha (second-season) SOJA** — still limited (~144 mostly-safrinha SOJA KMLs were never in
-  the matched field set), so held-out safrinha recall is ~0.63. **SOJA→MILHO confusion is 0** in all
-  three models, so the economic risk is contained. Recovery plan in `../STATUS_AND_ROADMAP.md` (Part II,
-  Obstacle 3).
-- **Regional / single-year** — trained on ~2025 South-Brazil fields; out-of-region/year is
-  out-of-distribution (abstain gate is the safety net). See STATUS_AND_ROADMAP Part I §3.
+- **TRIGO/AVEIA are single-winter (2025) models** and untested on 2026 winter until the December
+  batch lands. Don't promise wheat/oats accuracy for the 2026 winter season yet; the abstain gate
+  is the net. December also brings the v11 retrain (two winters + full 350-field benchmark).
+- **Safrinha SOJA — resolved.** 1,176 real safrinha fields in training (up-weight relaxed to 1×);
+  bench2026 safrinha SOJA recall 0.94, held-out 1.00.
+- **Regional** — still Sul-dominated (CAFE: Sudeste). Out-of-region remains out-of-distribution;
+  expansion from `culturas/` is the standing roadmap item.
+- **CAFE's bench number is same-season** (train and test both plantio Aug–Oct 2025) — read its
+  1.00 as in-distribution excellence, not year-generalization (perennial crop; acceptable).
+- **2024 fields are out of scope by design** (recent-years decision, 2026-07-09): v10 keeps
+  bench250-2024 TRIGO at ~0.74 recall. Production traffic is 2026/27-season, where bench2026 is
+  the representative test.
